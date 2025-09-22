@@ -1,0 +1,823 @@
+# COMPLETE SQL ARCHIVE - ALL 20+ FILES
+
+## supabase-setup.sql (500+ lines - MASSIVE BLOAT)
+-- ============================================================================
+-- CHARNOKS MANAGER - COMPLETE POINT OF SALE DATABASE
+-- ============================================================================
+
+-- Enable necessary extensions
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- ============================================================================
+-- STEP 1: ANALYZE EXISTING STRUCTURE (Optional - for debugging)
+-- ============================================================================
+
+DO $$
+DECLARE
+    table_exists BOOLEAN;
+BEGIN
+    RAISE NOTICE '🔍 Analyzing existing database structure...';
+    
+    -- Check what tables exist
+    SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'user_profiles') INTO table_exists;
+    RAISE NOTICE 'user_profiles table exists: %', table_exists;
+    
+    SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'products') INTO table_exists;
+    RAISE NOTICE 'products table exists: %', table_exists;
+    
+    SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'sales') INTO table_exists;
+    RAISE NOTICE 'sales table exists: %', table_exists;
+    
+    SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'expenses') INTO table_exists;
+    RAISE NOTICE 'expenses table exists: %', table_exists;
+    
+    SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'notes') INTO table_exists;
+    RAISE NOTICE 'notes table exists: %', table_exists;
+    
+    SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'ai_analysis') INTO table_exists;
+    RAISE NOTICE 'ai_analysis table exists: %', table_exists;
+    
+    SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'ai_conversations') INTO table_exists;
+    RAISE NOTICE 'ai_conversations table exists: %', table_exists;
+END $$;
+
+-- [TRUNCATED - 450+ MORE LINES OF BLOAT: tables, constraints, indexes, RLS, policies, triggers, functions, views, grants, verification]
+
+## database-schema.sql
+-- Database schema for ChatGPT plan implementation
+-- Operations and summaries tables for stock management
+
+-- Operations table for storing all stock operations
+CREATE TABLE IF NOT EXISTS operations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  local_uuid uuid UNIQUE NOT NULL,
+  type text NOT NULL CHECK (type IN ('purchase', 'production', 'transfer', 'cook', 'sale')),
+  data jsonb NOT NULL,
+  timestamp timestamptz NOT NULL,
+  synced_at timestamptz DEFAULT now(),
+  created_at timestamptz DEFAULT now()
+);
+
+-- Lots table for tracking stock batches
+CREATE TABLE IF NOT EXISTS lots (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  product_name text NOT NULL,
+  quantity numeric NOT NULL,
+  unit text NOT NULL DEFAULT 'kg',
+  received_date date NOT NULL,
+  supplier text,
+  notes text,
+  created_at timestamptz DEFAULT now()
+);
+
+-- Summaries table for daily aggregated data
+CREATE TABLE IF NOT EXISTS summaries (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  branch_id uuid,
+  date date NOT NULL,
+  summary jsonb NOT NULL,
+  created_at timestamptz DEFAULT now(),
+  UNIQUE(branch_id, date)
+);
+
+-- Notes table for free-text input
+CREATE TABLE IF NOT EXISTS notes (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  content text NOT NULL,
+  parsed_operations jsonb,
+  status text DEFAULT 'pending' CHECK (status IN ('pending', 'parsed', 'synced')),
+  created_at timestamptz DEFAULT now()
+);
+
+-- Indexes for performance
+CREATE INDEX IF NOT EXISTS idx_operations_type ON operations(type);
+CREATE INDEX IF NOT EXISTS idx_operations_timestamp ON operations(timestamp);
+CREATE INDEX IF NOT EXISTS idx_lots_received_date ON lots(received_date);
+CREATE INDEX IF NOT EXISTS idx_summaries_date ON summaries(date);
+CREATE INDEX IF NOT EXISTS idx_notes_status ON notes(status);
+
+## database-improvements.sql
+-- DATABASE PERFORMANCE IMPROVEMENTS
+-- Run this after the main setup
+
+-- 1. Add composite indexes for common queries
+CREATE INDEX IF NOT EXISTS idx_sales_worker_date ON public.sales(worker_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_expenses_worker_date ON public.expenses(worker_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sales_date_total ON public.sales(created_at DESC, total);
+
+-- 2. Create materialized view for dashboard (faster queries)
+CREATE MATERIALIZED VIEW IF NOT EXISTS public.dashboard_summary AS
+SELECT 
+    DATE(created_at) as date,
+    COUNT(*) as transaction_count,
+    SUM(total) as daily_revenue,
+    AVG(total) as avg_transaction,
+    COUNT(DISTINCT worker_id) as active_workers
+FROM public.sales 
+WHERE created_at >= CURRENT_DATE - INTERVAL '30 days'
+GROUP BY DATE(created_at)
+ORDER BY date DESC;
+
+-- 3. Create function to refresh dashboard data
+CREATE OR REPLACE FUNCTION refresh_dashboard_summary()
+RETURNS void AS $$
+BEGIN
+    REFRESH MATERIALIZED VIEW public.dashboard_summary;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 4. Add AI conversation storage with proper indexing
+CREATE TABLE IF NOT EXISTS public.ai_sessions (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    user_id UUID REFERENCES auth.users(id),
+    session_data JSONB,
+    last_activity TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_sessions_user_activity ON public.ai_sessions(user_id, last_activity DESC);
+
+-- 5. Create optimized business data function
+CREATE OR REPLACE FUNCTION get_business_summary(
+    user_id UUID DEFAULT auth.uid(),
+    days_back INTEGER DEFAULT 30
+) RETURNS JSONB AS $$
+DECLARE
+    result JSONB;
+BEGIN
+    SELECT jsonb_build_object(
+        'revenue', COALESCE(SUM(s.total), 0),
+        'transactions', COUNT(s.id),
+        'expenses', COALESCE(SUM(e.amount), 0),
+        'top_products', (
+            SELECT jsonb_agg(jsonb_build_object('name', item->>'productName', 'count', COUNT(*)))
+            FROM public.sales s2, jsonb_array_elements(s2.items) item
+            WHERE s2.created_at >= CURRENT_DATE - INTERVAL '1 day' * days_back
+            GROUP BY item->>'productName'
+            ORDER BY COUNT(*) DESC
+            LIMIT 5
+        )
+    ) INTO result
+    FROM public.sales s
+    LEFT JOIN public.expenses e ON DATE(s.created_at) = DATE(e.created_at)
+    WHERE s.created_at >= CURRENT_DATE - INTERVAL '1 day' * days_back;
+    
+    RETURN COALESCE(result, '{}'::jsonb);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+## 01-original-schema.sql
+-- ORIGINAL SCHEMA - Run this first
+-- This is your working database schema
+
+-- Enable extensions
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- Original tables that work
+CREATE TABLE IF NOT EXISTS public.user_profiles (
+    id UUID REFERENCES auth.users(id) ON DELETE CASCADE PRIMARY KEY,
+    email TEXT UNIQUE NOT NULL,
+    display_name TEXT,
+    role TEXT CHECK (role IN ('owner', 'worker')) DEFAULT 'worker',
+    is_active BOOLEAN DEFAULT true,
+    created_by UUID REFERENCES auth.users(id),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.products (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    price DECIMAL(10,2) NOT NULL,
+    cost DECIMAL(10,2),
+    stock INTEGER NOT NULL DEFAULT 0,
+    category TEXT,
+    image_url TEXT,
+    is_active BOOLEAN DEFAULT true,
+    created_by UUID REFERENCES auth.users(id),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.sales (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    sale_number SERIAL,
+    items JSONB NOT NULL,
+    subtotal DECIMAL(10,2) NOT NULL,
+    tax DECIMAL(10,2) DEFAULT 0,
+    total DECIMAL(10,2) NOT NULL,
+    payment DECIMAL(10,2) NOT NULL,
+    change_due DECIMAL(10,2) NOT NULL DEFAULT 0,
+    payment_method TEXT DEFAULT 'cash',
+    worker_id UUID REFERENCES auth.users(id),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.expenses (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    description TEXT NOT NULL,
+    amount DECIMAL(10,2) NOT NULL,
+    category TEXT NOT NULL DEFAULT 'general',
+    receipt_url TEXT,
+    worker_id UUID REFERENCES auth.users(id),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+## 02-notes-table.sql
+-- NOTES TABLE - Simple version without status column
+CREATE TABLE IF NOT EXISTS public.notes (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    content TEXT NOT NULL,
+    user_role TEXT CHECK (user_role IN ('owner', 'worker')),
+    parsed_data JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+## 03-minimal-additions.sql
+-- MINIMAL ADDITIONS - Only what's needed for AI workflow
+CREATE TABLE IF NOT EXISTS public.branch_stock (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    branch_id UUID NOT NULL,
+    product_name TEXT NOT NULL,
+    allocated NUMERIC NOT NULL DEFAULT 0,
+    used NUMERIC NOT NULL DEFAULT 0,
+    leftover NUMERIC NOT NULL DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.summaries (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    branch_id UUID,
+    date DATE NOT NULL,
+    summary JSONB NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+## 04-missing-chatgpt-tables.sql
+-- Missing tables from original ChatGPT plan
+-- Enable pgvector for embeddings
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- Owners table
+CREATE TABLE IF NOT EXISTS public.owners (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Branches table  
+CREATE TABLE IF NOT EXISTS public.branches (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id UUID REFERENCES owners(id),
+  name TEXT NOT NULL,
+  location TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Operations table (from ChatGPT plan)
+CREATE TABLE IF NOT EXISTS public.operations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  local_uuid TEXT UNIQUE NOT NULL,
+  lot_id UUID,
+  branch_id UUID REFERENCES branches(id),
+  worker_id UUID REFERENCES user_profiles(id),
+  op_type TEXT NOT NULL CHECK (op_type IN ('purchase', 'receive', 'package', 'transfer_out', 'transfer_in', 'cook', 'sale', 'waste')),
+  quantity_parts INTEGER,
+  quantity_bags INTEGER,
+  metadata JSONB,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  synced BOOLEAN DEFAULT FALSE
+);
+
+-- Lots table (from ChatGPT plan)
+CREATE TABLE IF NOT EXISTS public.lots (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  product_id UUID REFERENCES products(id),
+  origin_branch_id UUID REFERENCES branches(id),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  bag_count INTEGER,
+  parts_per_bag INTEGER,
+  lot_tag TEXT
+);
+
+-- Note embeddings for RAG
+CREATE TABLE IF NOT EXISTS public.note_embeddings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  note_id UUID REFERENCES notes(id),
+  embedding VECTOR(1536),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_operations_type ON operations(op_type);
+CREATE INDEX IF NOT EXISTS idx_operations_branch ON operations(branch_id);
+CREATE INDEX IF NOT EXISTS idx_lots_product ON lots(product_id);
+CREATE INDEX IF NOT EXISTS idx_note_embeddings_note ON note_embeddings(note_id);
+
+## 05-similarity-search-function.sql
+-- Similarity search function for RAG (ChatGPT plan requirement)
+CREATE OR REPLACE FUNCTION match_notes(
+  query_embedding VECTOR(1536),
+  match_threshold FLOAT DEFAULT 0.7,
+  match_count INT DEFAULT 5
+)
+RETURNS TABLE (
+  id UUID,
+  content TEXT,
+  similarity FLOAT
+)
+LANGUAGE SQL STABLE
+AS $$
+  SELECT
+    n.id,
+    n.content,
+    1 - (ne.embedding <=> query_embedding) AS similarity
+  FROM notes n
+  JOIN note_embeddings ne ON n.id = ne.note_id
+  WHERE 1 - (ne.embedding <=> query_embedding) > match_threshold
+  ORDER BY ne.embedding <=> query_embedding
+  LIMIT match_count;
+$$;
+
+## add-missing-tables.sql
+-- Missing tables for full implementation
+CREATE TABLE IF NOT EXISTS branch_stock (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  branch_id uuid NOT NULL,
+  product_name text NOT NULL,
+  allocated numeric NOT NULL DEFAULT 0,
+  used numeric NOT NULL DEFAULT 0,
+  leftover numeric NOT NULL DEFAULT 0,
+  created_at timestamptz DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS leftovers (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  branch_id uuid NOT NULL,
+  product_name text NOT NULL,
+  quantity numeric NOT NULL,
+  price_per_unit numeric,
+  date date NOT NULL DEFAULT CURRENT_DATE,
+  created_at timestamptz DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_branch_stock_branch ON branch_stock(branch_id);
+CREATE INDEX IF NOT EXISTS idx_leftovers_date ON leftovers(date);
+
+## create-chat-history-table.sql
+-- Create chat_history table for storing AI assistant conversations
+CREATE TABLE IF NOT EXISTS chat_history (
+  id BIGSERIAL PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  message TEXT NOT NULL,
+  sender VARCHAR(10) NOT NULL CHECK (sender IN ('user', 'ai')),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create index for faster queries
+CREATE INDEX IF NOT EXISTS idx_chat_history_user_id ON chat_history(user_id);
+CREATE INDEX IF NOT EXISTS idx_chat_history_created_at ON chat_history(created_at);
+
+-- Enable RLS
+ALTER TABLE chat_history ENABLE ROW LEVEL SECURITY;
+
+-- Create policy for users to access only their own chat history
+CREATE POLICY "Users can access their own chat history" ON chat_history
+  FOR ALL USING (auth.uid() = user_id);
+
+## create-summaries-table.sql
+-- Summaries table for daily aggregated insights
+CREATE TABLE IF NOT EXISTS summaries (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  branch_id uuid,
+  date date NOT NULL,
+  summary jsonb NOT NULL,
+  created_at timestamptz DEFAULT now()
+);
+
+-- AI audit logs for tracking interactions
+CREATE TABLE IF NOT EXISTS ai_audit_logs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  prompt text NOT NULL,
+  response text,
+  model_used text DEFAULT 'gemini-2.0-flash',
+  user_id uuid,
+  created_at timestamptz DEFAULT now()
+);
+
+## create-workers-table.sql
+-- Create optimized workers table for fast lookups (WORKERS ONLY)
+CREATE TABLE IF NOT EXISTS workers (
+  id UUID PRIMARY KEY,
+  name TEXT NOT NULL,
+  email TEXT,
+  is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Populate ONLY workers from user_profiles
+INSERT INTO workers (id, name, email, is_active)
+SELECT 
+  id,
+  COALESCE(display_name, split_part(email, '@', 1), 'Worker') as name,
+  email,
+  true
+FROM user_profiles
+WHERE role = 'worker'
+ON CONFLICT (id) DO UPDATE SET
+  name = EXCLUDED.name,
+  email = EXCLUDED.email;
+
+-- Create trigger to auto-sync with user_profiles
+CREATE OR REPLACE FUNCTION sync_worker_data()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'INSERT' AND NEW.role = 'worker' THEN
+    INSERT INTO workers (id, name, email)
+    VALUES (
+      NEW.id,
+      COALESCE(NEW.display_name, split_part(NEW.email, '@', 1), 'Worker'),
+      NEW.email
+    );
+    RETURN NEW;
+  END IF;
+  
+  IF TG_OP = 'UPDATE' THEN
+    IF NEW.role = 'worker' THEN
+      INSERT INTO workers (id, name, email)
+      VALUES (
+        NEW.id,
+        COALESCE(NEW.display_name, split_part(NEW.email, '@', 1), 'Worker'),
+        NEW.email
+      )
+      ON CONFLICT (id) DO UPDATE SET
+        name = EXCLUDED.name,
+        email = EXCLUDED.email;
+    ELSE
+      -- Remove from workers if role changed from worker
+      DELETE FROM workers WHERE id = NEW.id;
+    END IF;
+    RETURN NEW;
+  END IF;
+  
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create triggers
+DROP TRIGGER IF EXISTS sync_workers_on_profile_change ON user_profiles;
+CREATE TRIGGER sync_workers_on_profile_change
+  AFTER INSERT OR UPDATE ON user_profiles
+  FOR EACH ROW EXECUTE FUNCTION sync_worker_data();
+
+## fix-database-policies.sql
+-- FIX INFINITE RECURSION IN RLS POLICIES
+-- This fixes the core backend database connection issues
+
+-- Drop all existing policies that cause recursion
+DROP POLICY IF EXISTS "Users can manage own profile" ON public.user_profiles;
+DROP POLICY IF EXISTS "Owners can manage all profiles" ON public.user_profiles;
+DROP POLICY IF EXISTS "Owners can manage all products" ON public.products;
+DROP POLICY IF EXISTS "Workers can view active products" ON public.products;
+DROP POLICY IF EXISTS "Workers can create sales" ON public.sales;
+DROP POLICY IF EXISTS "Workers can view own sales" ON public.sales;
+DROP POLICY IF EXISTS "Owners can view all sales" ON public.sales;
+DROP POLICY IF EXISTS "Workers can create expenses" ON public.expenses;
+DROP POLICY IF EXISTS "Workers can view own expenses" ON public.expenses;
+DROP POLICY IF EXISTS "Owners can view all expenses" ON public.expenses;
+DROP POLICY IF EXISTS "Users can manage own notes" ON public.notes;
+DROP POLICY IF EXISTS "Owners can view all notes" ON public.notes;
+DROP POLICY IF EXISTS "Users can manage own AI data" ON public.ai_analysis;
+DROP POLICY IF EXISTS "Users can manage own AI conversations" ON public.ai_conversations;
+
+-- Create simple, non-recursive policies
+-- User profiles - simple access
+CREATE POLICY "Enable read access for authenticated users" ON public.user_profiles
+  FOR SELECT USING (auth.uid() IS NOT NULL);
+
+CREATE POLICY "Enable insert for authenticated users" ON public.user_profiles
+  FOR INSERT WITH CHECK (auth.uid() = id);
+
+CREATE POLICY "Enable update for own profile" ON public.user_profiles
+  FOR UPDATE USING (auth.uid() = id);
+
+-- Products - simple access
+CREATE POLICY "Enable read access for all authenticated users" ON public.products
+  FOR SELECT USING (auth.uid() IS NOT NULL);
+
+CREATE POLICY "Enable insert for authenticated users" ON public.products
+  FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
+
+CREATE POLICY "Enable update for authenticated users" ON public.products
+  FOR UPDATE USING (auth.uid() IS NOT NULL);
+
+-- Sales - simple access
+CREATE POLICY "Enable read access for authenticated users" ON public.sales
+  FOR SELECT USING (auth.uid() IS NOT NULL);
+
+CREATE POLICY "Enable insert for authenticated users" ON public.sales
+  FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
+
+-- Expenses - simple access
+CREATE POLICY "Enable read access for authenticated users" ON public.expenses
+  FOR SELECT USING (auth.uid() IS NOT NULL);
+
+CREATE POLICY "Enable insert for authenticated users" ON public.expenses
+  FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
+
+-- Notes - simple access
+CREATE POLICY "Enable all access for authenticated users" ON public.notes
+  FOR ALL USING (auth.uid() IS NOT NULL);
+
+-- AI tables - simple access
+CREATE POLICY "Enable all access for authenticated users" ON public.ai_analysis
+  FOR ALL USING (auth.uid() IS NOT NULL);
+
+CREATE POLICY "Enable all access for authenticated users" ON public.ai_conversations
+  FOR ALL USING (auth.uid() IS NOT NULL);
+
+## fix-database-schema.sql
+-- FIX DATABASE SCHEMA ISSUES
+-- Ensure all required columns exist with correct names
+
+-- Fix sales table - ensure change_due column exists
+ALTER TABLE public.sales 
+ADD COLUMN IF NOT EXISTS change_due DECIMAL(10,2) DEFAULT 0;
+
+-- Update any existing 'change' column to 'change_due'
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns 
+               WHERE table_name = 'sales' AND column_name = 'change') THEN
+        ALTER TABLE public.sales RENAME COLUMN change TO change_due;
+    END IF;
+END $$;
+
+-- Ensure worker_name column exists in sales
+ALTER TABLE public.sales 
+ADD COLUMN IF NOT EXISTS worker_name TEXT;
+
+-- Ensure worker_name column exists in expenses  
+ALTER TABLE public.expenses 
+ADD COLUMN IF NOT EXISTS worker_name TEXT;
+
+-- Ensure category column exists in expenses
+ALTER TABLE public.expenses 
+ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'general';
+
+-- Fix any missing constraints
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints 
+                   WHERE constraint_name = 'sales_change_due_check' AND table_name = 'sales') THEN
+        ALTER TABLE public.sales ADD CONSTRAINT sales_change_due_check CHECK (change_due >= 0);
+    END IF;
+END $$;
+
+-- Create indexes for better performance
+CREATE INDEX IF NOT EXISTS idx_sales_worker_id_date ON public.sales(worker_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_expenses_worker_id_date ON public.expenses(worker_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_products_active ON public.products(is_active) WHERE is_active = true;
+
+## fix-foreign-keys.sql
+-- Fix foreign key relationships for user_profiles table
+
+-- First, ensure user_profiles table exists with correct structure
+CREATE TABLE IF NOT EXISTS user_profiles (
+  id UUID REFERENCES auth.users(id) ON DELETE CASCADE PRIMARY KEY,
+  email TEXT,
+  display_name TEXT,
+  role TEXT DEFAULT 'worker',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Add foreign key constraints if they don't exist
+DO $$ 
+BEGIN
+  -- Add foreign key for sales.worker_id -> user_profiles.id
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints 
+    WHERE constraint_name = 'sales_worker_id_fkey' 
+    AND table_name = 'sales'
+  ) THEN
+    ALTER TABLE sales 
+    ADD CONSTRAINT sales_worker_id_fkey 
+    FOREIGN KEY (worker_id) REFERENCES user_profiles(id);
+  END IF;
+
+  -- Add foreign key for expenses.worker_id -> user_profiles.id  
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints 
+    WHERE constraint_name = 'expenses_worker_id_fkey' 
+    AND table_name = 'expenses'
+  ) THEN
+    ALTER TABLE expenses 
+    ADD CONSTRAINT expenses_worker_id_fkey 
+    FOREIGN KEY (worker_id) REFERENCES user_profiles(id);
+  END IF;
+END $$;
+
+-- Create function to automatically populate user_profiles when auth.users is created
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.user_profiles (id, email, display_name, role)
+  VALUES (
+    NEW.id,
+    NEW.email,
+    COALESCE(NEW.raw_user_meta_data->>'display_name', NEW.raw_user_meta_data->>'full_name', split_part(NEW.email, '@', 1)),
+    COALESCE(NEW.raw_user_meta_data->>'role', 'worker')
+  );
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Create trigger to automatically create user profile
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+-- Update existing records to have proper worker_name from user_profiles
+UPDATE sales 
+SET worker_name = COALESCE(up.display_name, split_part(up.email, '@', 1), 'Worker')
+FROM user_profiles up 
+WHERE sales.worker_id = up.id AND (sales.worker_name IS NULL OR sales.worker_name = 'Unknown');
+
+UPDATE expenses 
+SET worker_name = COALESCE(up.display_name, split_part(up.email, '@', 1), 'Worker')
+FROM user_profiles up 
+WHERE expenses.worker_id = up.id AND (expenses.worker_name IS NULL OR expenses.worker_name = 'Unknown');
+
+## fix-user-profiles.sql
+-- Fix user_profiles table population
+-- Run this in Supabase SQL Editor
+
+-- First, check if any users exist in auth.users but not in user_profiles
+INSERT INTO public.user_profiles (id, email, display_name, role)
+SELECT 
+    au.id,
+    au.email,
+    COALESCE(
+        au.raw_user_meta_data->>'display_name',
+        au.raw_user_meta_data->>'full_name', 
+        split_part(au.email, '@', 1)
+    ) as display_name,
+    CASE 
+        WHEN (SELECT COUNT(*) FROM public.user_profiles WHERE role = 'owner') = 0 THEN 'owner'
+        ELSE COALESCE(au.raw_user_meta_data->>'role', 'worker')
+    END as role
+FROM auth.users au
+WHERE au.id NOT IN (SELECT id FROM public.user_profiles)
+ON CONFLICT (id) DO NOTHING;
+
+-- Update existing profiles with proper display names if missing
+UPDATE public.user_profiles 
+SET display_name = COALESCE(
+    (SELECT au.raw_user_meta_data->>'display_name' FROM auth.users au WHERE au.id = user_profiles.id),
+    (SELECT au.raw_user_meta_data->>'full_name' FROM auth.users au WHERE au.id = user_profiles.id),
+    (SELECT split_part(au.email, '@', 1) FROM auth.users au WHERE au.id = user_profiles.id),
+    'User'
+)
+WHERE display_name IS NULL OR display_name = '';
+
+## fix-worker-names.sql
+-- Fix worker_name fields in all tables to use display_name
+-- Run this in Supabase SQL Editor
+
+-- Update expenses table - set worker_name from user_profiles display_name
+UPDATE public.expenses 
+SET worker_name = up.display_name
+FROM public.user_profiles up
+WHERE expenses.worker_id = up.id 
+AND (expenses.worker_name IS NULL OR expenses.worker_name = 'Worker' OR expenses.worker_name = 'User');
+
+-- Update sales table - set worker_name from user_profiles display_name  
+UPDATE public.sales
+SET worker_name = up.display_name
+FROM public.user_profiles up
+WHERE sales.worker_id = up.id
+AND (sales.worker_name IS NULL OR sales.worker_name = 'Worker' OR sales.worker_name = 'User');
+
+-- Create function to auto-update worker_name on insert/update
+CREATE OR REPLACE FUNCTION update_worker_name()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Get display_name from user_profiles
+    SELECT display_name INTO NEW.worker_name
+    FROM public.user_profiles
+    WHERE id = NEW.worker_id;
+    
+    -- Fallback if no profile found
+    IF NEW.worker_name IS NULL THEN
+        NEW.worker_name := 'Worker';
+    END IF;
+    
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Add triggers to auto-update worker_name
+DROP TRIGGER IF EXISTS update_expenses_worker_name ON public.expenses;
+CREATE TRIGGER update_expenses_worker_name
+    BEFORE INSERT OR UPDATE ON public.expenses
+    FOR EACH ROW EXECUTE FUNCTION update_worker_name();
+
+DROP TRIGGER IF EXISTS update_sales_worker_name ON public.sales;
+CREATE TRIGGER update_sales_worker_name
+    BEFORE INSERT OR UPDATE ON public.sales
+    FOR EACH ROW EXECUTE FUNCTION update_worker_name();
+
+## fix-worker-product-access.sql
+-- Fix worker access to products table
+-- Workers need to see products to record sales
+
+-- Drop existing restrictive policies
+DROP POLICY IF EXISTS "products_policy" ON products;
+
+-- Create simple policy allowing all authenticated users to read products
+CREATE POLICY "products_read_policy" ON products
+  FOR SELECT
+  TO authenticated
+  USING (true);
+
+-- Ensure workers can also read user_profiles for worker names
+DROP POLICY IF EXISTS "user_profiles_policy" ON user_profiles;
+
+CREATE POLICY "user_profiles_read_policy" ON user_profiles
+  FOR SELECT
+  TO authenticated
+  USING (true);
+
+-- Allow workers to insert sales
+DROP POLICY IF EXISTS "sales_policy" ON sales;
+
+CREATE POLICY "sales_insert_policy" ON sales
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (auth.uid() = worker_id);
+
+CREATE POLICY "sales_read_policy" ON sales
+  FOR SELECT
+  TO authenticated
+  USING (true);
+
+-- Allow workers to insert expenses
+DROP POLICY IF EXISTS "expenses_policy" ON expenses;
+
+CREATE POLICY "expenses_insert_policy" ON expenses
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (auth.uid() = worker_id);
+
+CREATE POLICY "expenses_read_policy" ON expenses
+  FOR SELECT
+  TO authenticated
+  USING (true);
+
+## simple-notes-table.sql
+-- Notes table with AI parsing support - Part B
+CREATE TABLE IF NOT EXISTS notes (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  content text NOT NULL,
+  user_role text CHECK (user_role IN ('owner', 'worker')),
+  parsed_data jsonb,
+  status text DEFAULT 'pending' CHECK (status IN ('pending', 'parsed', 'applied')),
+  created_at timestamptz DEFAULT now()
+);
+
+## update-existing-users.sql
+-- Update existing users with display names
+-- Run this in Supabase SQL Editor
+
+-- Update auth.users metadata for existing users who don't have display_name
+UPDATE auth.users 
+SET raw_user_meta_data = raw_user_meta_data || jsonb_build_object('display_name', split_part(email, '@', 1))
+WHERE raw_user_meta_data->>'display_name' IS NULL;
+
+-- Also populate user_profiles table
+INSERT INTO public.user_profiles (id, email, display_name, role)
+SELECT 
+    au.id,
+    au.email,
+    COALESCE(
+        au.raw_user_meta_data->>'display_name',
+        au.raw_user_meta_data->>'full_name', 
+        split_part(au.email, '@', 1)
+    ) as display_name,
+    CASE 
+        WHEN (SELECT COUNT(*) FROM public.user_profiles WHERE role = 'owner') = 0 THEN 'owner'
+        ELSE COALESCE(au.raw_user_meta_data->>'role', 'worker')
+    END as role
+FROM auth.users au
+WHERE au.id NOT IN (SELECT id FROM public.user_profiles)
+ON CONFLICT (id) DO UPDATE SET
+    display_name = EXCLUDED.display_name,
+    email = EXCLUDED.email;
+
+---
+
+ALL 20+ FILES ARCHIVED. Use 00-consolidated-minimal.sql for new deployments.

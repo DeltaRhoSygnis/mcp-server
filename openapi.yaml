@@ -1,0 +1,462 @@
+openapi: 3.0.0
+info:
+  title: Charnoks Chicken Business MCP Server API
+  version: 2.0.0
+  description: Model Context Protocol (MCP) server for chicken business operations with AI tools for notes, voice, stock, sales, forecasting, and memory graph. Includes standard MCP capabilities (fetch, filesystem, git, memory, sequential thinking, time).
+  contact:
+    name: MCP Server Team
+servers:
+  - url: http://localhost:3002
+    description: Local development
+  - url: https://your-prod-url.com
+    description: Production
+security:
+  - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    MCPError:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: integer
+              enum: [400, 401, 403, 422, 429, 500]
+            message:
+              type: string
+            details:
+              type: object
+          required: [code, message]
+      required: [error]
+    NoteCollectionInput:
+      type: object
+      properties:
+        content:
+          type: string
+          maxLength: 5000
+        userRole:
+          type: string
+          enum: [owner, worker]
+        branch:
+          type: string
+      required: [content, userRole]
+    ParsedNote:
+      type: object
+      properties:
+        purchases:
+          type: array
+          items:
+            type: object
+            properties:
+              productId:
+                type: string
+              qty:
+                type: number
+              cost:
+                type: number
+        sales:
+          type: array
+          items:
+            type: object
+            properties:
+              productId:
+                type: string
+              qty:
+                type: number
+              revenue:
+                type: number
+      required: [purchases, sales]
+    ForecastResult:
+      type: object
+      properties:
+        predictedSales:
+          type: array
+          items:
+            type: object
+            properties:
+              day:
+                type: string
+              amount:
+                type: number
+              confidence:
+                type: number
+                minimum: 0
+                maximum: 1
+        summary:
+          type: string
+      required: [predictedSales]
+    LiveVoiceStreamInput:
+      type: object
+      properties:
+        streamId:
+          type: string
+        transcriptChunk:
+          type: string
+          maxLength: 500
+        products:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+      required: [streamId, transcriptChunk]
+    PartialParse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              productId:
+                type: string
+              qty:
+                type: number
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+    QueryAILogsInput:
+      type: object
+      properties:
+        from:
+          type: string
+          format: date-time
+        to:
+          type: string
+          format: date-time
+        aggregate:
+          type: string
+          enum: [count, avg_tokens]
+      required: [from, to]
+    SequentialThinkingInput:
+      type: object
+      properties:
+        thought:
+          type: string
+        nextThoughtNeeded:
+          type: boolean
+        thoughtNumber:
+          type: integer
+        totalThoughts:
+          type: integer
+      required: [thought, nextThoughtNeeded, thoughtNumber, totalThoughts]
+    FetchInput:
+      type: object
+      properties:
+        urls:
+          type: array
+          items:
+            type: string
+        query:
+          type: string
+      required: [urls]
+    FilesystemInput:
+      type: object
+      properties:
+        operation:
+          type: string
+          enum: [create, read, edit, delete]
+        filePath:
+          type: string
+        content:
+          type: string
+      required: [operation, filePath]
+    GitInput:
+      type: object
+      properties:
+        repo:
+          type: string
+          format: owner/repo
+        query:
+          type: string
+      required: [repo, query]
+    MemoryInput:
+      type: object
+      properties:
+        operation:
+          type: string
+          enum: [create_entities, create_relations, add_observations, search_nodes, read_graph, delete_entities]
+        params:
+          type: object
+      required: [operation]
+    TimeInput:
+      type: object
+      properties:
+        input:
+          type: string
+        timezone:
+          type: string
+      required: [input]
+    ToolCallResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        result:
+          type: object
+        metadata:
+          type: object
+          properties:
+            tool:
+              type: string
+            requestId:
+              type: string
+            timestamp:
+              type: string
+      required: [success, result]
+  parameters:
+    ToolName:
+      name: name
+      in: body
+      required: true
+      schema:
+        type: string
+    Arguments:
+      name: arguments
+      in: body
+      required: true
+      schema:
+        type: object
+paths:
+  /health:
+    get:
+      summary: Health check
+      tags: [MCP]
+      responses:
+        '200':
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  services:
+                    type: object
+                  models:
+                    type: array
+        '503':
+          description: Unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPError'
+  /api/tools:
+    get:
+      summary: List tools
+      tags: [Tools]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Tools list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tools:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        description:
+                          type: string
+                        inputSchema:
+                          type: object
+                  count:
+                    type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/tools/call:
+    post:
+      summary: Call tool
+      tags: [Tools]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                arguments:
+                  type: object
+              required: [name, arguments]
+      responses:
+        '200':
+          description: Tool result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ToolCallResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimit'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/models:
+    get:
+      summary: List models
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Models
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  models:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        description:
+                          type: string
+                  default_selection_strategy:
+                    type: string
+  /auth:
+    post:
+      summary: Authenticate and get JWT
+      tags: [MCP]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token:
+                  type: string
+              required: [token]
+      responses:
+        '200':
+          description: JWT token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /test:
+    get:
+      summary: MCP Test/Reference Server
+      tags: [MCP]
+      responses:
+        '200':
+          description: Test prompts/resources
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  prompts:
+                    type: array
+                    items:
+                      type: string
+                  resources:
+                    type: array
+                    items:
+                      type: string
+                  tools:
+                    $ref: '#/components/schemas/ToolCallResponse'
+components:
+  responses:
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MCPError'
+            example:
+              error:
+                code: 401
+                message: 'No token provided'
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MCPError'
+            example:
+              error:
+                code: 403
+                message: 'Invalid token'
+    Unprocessable:
+      description: Unprocessable Entity
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MCPError'
+            example:
+              error:
+                code: 422
+                message: 'Invalid input'
+    RateLimit:
+      description: Rate Limit Exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MCPError'
+            example:
+              error:
+                code: 429
+                message: 'Rate limit exceeded'
+    InternalError:
+      description: Internal Server Error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MCPError'
+            example:
+              error:
+                code: 500
+                message: 'Tool execution failed'
+    BadRequest:
+      description: Bad Request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MCPError'
+            example:
+              error:
+                code: 400
+                message: 'Invalid message'
+tags:
+  - name: MCP
+    description: Core protocol endpoints
+  - name: Tools
+    description: MCP tools for business operations
+  - name: AI
+    description: AI model and proxy endpoints

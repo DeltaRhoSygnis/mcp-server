@@ -7,6 +7,7 @@ import { GoogleGenAI, GenerateContentResponse, Type } from "@google/genai";
 import type { Sale, ForecastDataPoint, AIInsights, Expense, Product, ParsedSaleFromAI } from '../types';
 import { ErrorHandler } from '../utils/errorHandler';
 import { performanceMonitor } from '../utils/monitoring';
+import pLimit from 'p-limit';
 
 /**
  * Optimized business context for AI
@@ -63,6 +64,7 @@ export class OptimizedAIService {
   private readonly RATE_LIMIT_WINDOW = 60 * 1000; // 1 minute
   private readonly RATE_LIMIT_MAX_REQUESTS = 30; // 30 requests per minute
   private readonly MAX_CACHE_SIZE = 100;
+  private readonly CONCURRENCY_LIMIT = 5;
 
   private constructor() {
     const apiKey = import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.VITE_API_KEY;
@@ -634,6 +636,16 @@ export class OptimizedAIService {
       hitRate: 0, // Would need to track hits/misses for accurate calculation
       rateLimitStatus
     };
+  }
+
+  /**
+   * Batch process requests with concurrency limit
+   */
+  async batchProcess(requests: any[]) {
+    const limit = pLimit(this.CONCURRENCY_LIMIT);
+
+    const results = await Promise.all(requests.map(req => limit(() => this.geminiProxy.generateText(req.prompt, req.options))));
+    return results;
   }
 }
 

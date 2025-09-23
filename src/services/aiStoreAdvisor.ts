@@ -5,16 +5,13 @@
  */
 
 import { createClient } from '@supabase/supabase-js';
-import { GeminiAPIManager } from './geminiAPIManager';
+import AdvancedGeminiProxy from '../advanced-gemini-proxy';
 
 // Initialize Supabase client for MCP server context
 const supabase = createClient(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
-
-// Initialize Gemini API manager
-const geminiAPIManager = new GeminiAPIManager();
 
 interface BusinessMemory {
   pattern_type: string;
@@ -50,7 +47,12 @@ class AIStoreAdvisorService {
   private businessMemory: Map<string, BusinessMemory> = new Map();
   private lastAdviceTime: number = 0;
   private currentBusinessState: BusinessState | null = null;
-  
+  private geminiProxy: AdvancedGeminiProxy;
+
+  constructor(geminiProxy: AdvancedGeminiProxy) {
+    this.geminiProxy = geminiProxy;
+  }
+
   /**
    * Main AI Store Advisor - your business consultant that understands everything
    */
@@ -93,35 +95,28 @@ class AIStoreAdvisorService {
       const businessContext = this.buildBusinessContext();
       
       const prompt = `
-You are an expert chicken business consultant with deep knowledge of this specific business.
+You are an expert business consultant for a small fried chicken restaurant.
+Here is a snapshot of their recent performance:
+- Total Sales (last 90 days): ₱${businessContext.sales_summary.total_revenue.toFixed(2)}
+- Total Expenses (last 90 days): ₱${businessContext.expense_summary.total_amount.toFixed(2)}
+- Net Profit (last 90 days): ₱${(businessContext.sales_summary.total_revenue - businessContext.expense_summary.total_amount).toFixed(2)}
 
-CURRENT BUSINESS STATE:
-${JSON.stringify(businessContext, null, 2)}
-
-BUSINESS MEMORY & PATTERNS:
-${this.getMemoryContext()}
-
-USER ROLE: ${userRole}
-USER QUESTION: "${question}"
-
-Provide helpful, specific advice based on:
-1. Current business data and trends
-2. Historical patterns you've learned
-3. Industry best practices for chicken businesses
-4. Role-appropriate guidance (owner vs worker)
-
-Be conversational, practical, and actionable. Reference specific data when relevant.
+Based on this data, provide smart business insights.
+- "insights": Provide 2-3 general observations.
+- "risks": Identify 2-3 potential risks or areas of concern.
+- "opportunities": Suggest 2-3 growth opportunities or areas for improvement.
 `;
 
-      const response = await geminiAPIManager.makeRequest(
-        { 
-          type: 'text', 
-          complexity: 'complex', 
-          priority: 'high',
-          requiresStructuredOutput: false 
-        },
-        prompt
-      );
+      const response = await this.geminiProxy.generateText(prompt, {
+        model: 'gemini-2.0-flash',
+        temperature: 0.7,
+        maxOutputTokens: 2000,
+        taskType: {
+          complexity: 'complex',
+          type: 'analysis',
+          priority: 'high'
+        }
+      });
       
       // Log the consultation for learning
       await this.logBusinessConsultation(question, response.text, userRole);
@@ -340,10 +335,16 @@ Return JSON array:
 ]
 `;
 
-      const response = await geminiAPIManager.makeRequest(
-        { type: 'text', complexity: 'medium', priority: 'normal', requiresStructuredOutput: true },
-        prompt
-      );
+      const response = await this.geminiProxy.generateText(prompt, {
+        model: 'gemini-2.0-flash',
+        temperature: 0.7,
+        maxOutputTokens: 2000,
+        taskType: {
+          complexity: 'medium',
+          type: 'analysis',
+          priority: 'normal'
+        }
+      });
       
       const aiAdvice = JSON.parse(response.text);
       
@@ -538,13 +539,13 @@ Return JSON array:
   
   private async loadBusinessMemory(): Promise<void> {
     try {
-      // Try to load from IndexedDB first
-      const memories = await offlineDB.getAll('business_memory');
+      const { data: memories } = await supabase
+        .from('business_memory')
+        .select('*');
       
-      for (const memory of memories) {
+      for (const memory of memories || []) {
         this.businessMemory.set(memory.pattern_type, memory);
       }
-      
     } catch (error) {
       console.warn('Failed to load business memory:', error);
     }
@@ -552,14 +553,10 @@ Return JSON array:
   
   private async saveBusinessMemory(): Promise<void> {
     try {
-      // Save to IndexedDB
-      for (const [key, memory] of this.businessMemory) {
-        await offlineDB.upsert('business_memory', {
-          ...memory,
-          local_uuid: key
-        });
-      }
-      
+      const memories = Array.from(this.businessMemory.values());
+      await supabase
+        .from('business_memory')
+        .upsert(memories);
     } catch (error) {
       console.warn('Failed to save business memory:', error);
     }
@@ -778,7 +775,7 @@ Return JSON array:
 }
 
 // Export singleton instance
-export const aiStoreAdvisor = new AIStoreAdvisorService();
+export const aiStoreAdvisor = new AIStoreAdvisorService(new AdvancedGeminiProxy());
 
 // Export types
 export type { BusinessMemory, ContextualAdvice, BusinessState };

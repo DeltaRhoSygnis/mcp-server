@@ -1,3 +1,5 @@
+import { Request, Response, NextFunction } from 'express';
+
 // Rate limiting and batching for Gemini API calls
 class RateLimitService {
   private queue: Array<{ fn: () => Promise<any>, resolve: Function, reject: Function }> = [];
@@ -78,3 +80,35 @@ class RateLimitService {
 }
 
 export const rateLimitService = new RateLimitService();
+
+export function getRateLimitKey(req: Request): string {
+  const userId = (req as any).user?.userId || 'anonymous';
+  return `${req.ip}-${userId}`;
+}
+
+const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
+
+export const rateLimitMiddleware = (req: Request, res: Response, next: NextFunction): void => {
+  const key = getRateLimitKey(req);
+  const now = Date.now();
+  const windowMs = 60000; // 1 min
+  const max = 10;
+
+  if (rateLimitMap.has(key)) {
+    const item = rateLimitMap.get(key)!;
+    if (now - item.resetTime < windowMs) {
+      if (item.count >= max) {
+        return res.status(429).json({ error: { code: 429, message: 'Rate limit exceeded', details: { remaining: 0 } } });
+      }
+      item.count++;
+    } else {
+      item.count = 1;
+      item.resetTime = now;
+    }
+  } else {
+    rateLimitMap.set(key, { count: 1, resetTime: now });
+  }
+  next();
+};
+
+// Periodic cleanup (add in index.ts init: setInterval(() => { rateLimitMap.forEach((item, key) => { if (Date.now() - item.resetTime > windowMs) rateLimitMap.delete(key); }); }, 300000); )

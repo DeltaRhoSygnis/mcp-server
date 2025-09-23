@@ -1,7 +1,8 @@
 import { supabase } from '../src/supabaseConfig';
-import type { Sale } from '../types';
+import type { Sale, Product } from '../types';
 import { safeLog } from '../utils/securityUtils';
 import { fixWorkerNames } from './dataFixService';
+import { parseSaleFromVoice } from './geminiService';
 
 export const getSales = async (limitCount: number = 50): Promise<Sale[]> => {
   try {
@@ -41,17 +42,40 @@ export const getSales = async (limitCount: number = 50): Promise<Sale[]> => {
 };
 
 export const recordSale = async (saleData: {
-  items: { productId: string; quantity: number }[];
-  payment: number;
+  items?: { productId: string; quantity: number }[]; // Optional for manual input
+  transcript?: string; // New: Voice transcript for AI parsing
+  payment?: number; // Optional if in transcript
+  products?: Product[]; // Needed for parsing
 }): Promise<string> => {
   try {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('User not authenticated');
 
+    let items: { productId: string; quantity: number }[] = [];
     let total = 0;
-    const saleItems: any[] = [];
+    let finalPayment = saleData.payment || 0;
 
-    const productIds = saleData.items.map(item => item.productId);
+    if (saleData.transcript && saleData.products) {
+      // Parse voice transcript using AI
+      const parsed = await parseSaleFromVoice(saleData.transcript, saleData.products);
+      
+      // Map parsed items to product IDs (assuming products have id and name)
+      items = parsed.items.map((item: { productName: string; quantity: number }) => {
+        const product = saleData.products.find((p: Product) => p.name === item.productName);
+        if (!product) throw new Error(`Product ${item.productName} not found`);
+        return { productId: product.id, quantity: item.quantity };
+      });
+      
+      finalPayment = parsed.payment;
+    } else if (saleData.items) {
+      // Manual input fallback
+      items = saleData.items;
+    } else {
+      throw new Error('Either items or transcript with products must be provided');
+    }
+
+    // Calculate total from items
+    const productIds = items.map(item => item.productId);
     const { data: products } = await supabase
       .from('products')
       .select('*')
@@ -59,19 +83,12 @@ export const recordSale = async (saleData: {
 
     if (!products) throw new Error('Products not found');
 
-    for (const item of saleData.items) {
+    for (const item of items) {
       const product = products.find((p: any) => p.id === item.productId);
       if (!product) throw new Error(`Product ${item.productId} not found`);
       
       const itemTotal = product.price * item.quantity;
       total += itemTotal;
-
-      saleItems.push({
-        productId: item.productId,
-        productName: product.name,
-        quantity: item.quantity,
-        price: product.price
-      });
     }
 
     const { data: profile } = await supabase
@@ -85,13 +102,22 @@ export const recordSale = async (saleData: {
     const { data: sale, error: saleError } = await supabase
       .from('sales')
       .insert({
-        items: saleItems,
+        items: items.map(item => {
+          const product = products.find((p: any) => p.id === item.productId);
+          return {
+            productId: item.productId,
+            productName: product?.name,
+            quantity: item.quantity,
+            price: product?.price
+          };
+        }),
         subtotal: total,
         total,
-        payment: saleData.payment,
-        change_due: saleData.payment - total,
+        payment: finalPayment,
+        change_due: finalPayment - total,
         worker_id: user.id,
-        worker_name: workerName
+        worker_name: workerName,
+        source: saleData.transcript ? 'voice_parsed' : 'manual' // Track source
       })
       .select()
       .single();

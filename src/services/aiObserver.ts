@@ -5,16 +5,13 @@
  */
 
 import { createClient } from '@supabase/supabase-js';
-import { GeminiAPIManager } from './geminiAPIManager';
+import AdvancedGeminiProxy from '../advanced-gemini-proxy';
 
 // Initialize Supabase client for MCP server context
 const supabase = createClient(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
-
-// Initialize Gemini API manager
-const geminiAPIManager = new GeminiAPIManager();
 
 interface BusinessInsight {
   type: 'insight' | 'trend' | 'recommendation' | 'alert';
@@ -36,6 +33,12 @@ interface DailySummary {
 }
 
 class AIObserverService {
+  private geminiProxy: AdvancedGeminiProxy;
+
+  constructor(geminiProxy: AdvancedGeminiProxy) {
+    this.geminiProxy = geminiProxy;
+  }
+
   /**
    * Generate daily business summary with AI insights
    * This is the coolest feature - AI that understands your business!
@@ -134,9 +137,18 @@ Return insights in this format:
 }
 `;
 
-      const response = await geminiAPIManager.makeRequest(
-        { type: 'text', complexity: 'medium', priority: 'normal', requiresStructuredOutput: true },
-        prompt
+      const response = await this.geminiProxy.generateText(
+        prompt,
+        { 
+          model: 'gemini-2.0-flash',
+          temperature: 0.3,
+          maxOutputTokens: 1000,
+          taskType: {
+            complexity: 'medium',
+            type: 'analysis',
+            priority: 'medium'
+          }
+        }
       );
       
       const analysis = JSON.parse(response.text);
@@ -187,9 +199,18 @@ Return JSON:
 }
 `;
 
-      const response = await geminiAPIManager.makeRequest(
-        { type: 'text', complexity: 'medium', priority: 'normal', requiresStructuredOutput: true },
-        prompt
+      const response = await this.geminiProxy.generateText(
+        prompt,
+        { 
+          model: 'gemini-2.0-flash',
+          temperature: 0.3,
+          maxOutputTokens: 1000,
+          taskType: {
+            complexity: 'medium',
+            type: 'analysis',
+            priority: 'medium'
+          }
+        }
       );
       
       const analysis = JSON.parse(response.text);
@@ -264,9 +285,18 @@ Return JSON:
 }
 `;
 
-      const response = await geminiAPIManager.makeRequest(
-        { type: 'text', complexity: 'complex', priority: 'high', requiresStructuredOutput: true },
-        prompt
+      const response = await this.geminiProxy.generateText(
+        prompt,
+        { 
+          model: 'gemini-2.0-flash',
+          temperature: 0.3,
+          maxOutputTokens: 1000,
+          taskType: {
+            complexity: 'complex',
+            type: 'analysis',
+            priority: 'high'
+          }
+        }
       );
       
       const analysis = JSON.parse(response.text);
@@ -307,9 +337,18 @@ Focus on:
 Return array of strings: ["recommendation1", "recommendation2", ...]
 `;
 
-      const response = await geminiAPIManager.makeRequest(
-        { type: 'text', complexity: 'medium', priority: 'normal', requiresStructuredOutput: true },
-        prompt
+      const response = await this.geminiProxy.generateText(
+        prompt,
+        { 
+          model: 'gemini-2.0-flash',
+          temperature: 0.3,
+          maxOutputTokens: 1000,
+          taskType: {
+            complexity: 'medium',
+            type: 'analysis',
+            priority: 'medium'
+          }
+        }
       );
       
       return JSON.parse(response.text);
@@ -402,7 +441,7 @@ Return array of strings: ["recommendation1", "recommendation2", ...]
 }
 
 // Export singleton instance
-export const aiObserver = new AIObserverService();
+export const aiObserver = new AIObserverService(new AdvancedGeminiProxy());
 
 // Export types
 export type { BusinessInsight, DailySummary };

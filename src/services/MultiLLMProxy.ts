@@ -8,6 +8,8 @@ import AdvancedGeminiProxy, { GeminiResponse, TaskRequest } from '../advanced-ge
 import { CohereClient } from 'cohere-ai';
 import { HfInference } from '@huggingface/inference';
 import OpenAI from 'openai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import { Anthropic } from '@anthropic-ai/sdk';
 
 export interface LLMOptions {
   provider?: 'gemini' | 'cohere' | 'hf' | 'openrouter';
@@ -20,10 +22,15 @@ export class MultiLLMProxy extends AdvancedGeminiProxy {
   private cohere: CohereClient | null = null;
   private hf: HfInference | null = null;
   private openai: OpenAI | null = null;
+  private anthropic: Anthropic | null = null;
+  private gemini: GoogleGenerativeAI;
   private providerUsage: Map<string, { requests: number; tokens: number; resetTime: number }> = new Map();
 
   constructor() {
     super(); // Inherit Gemini functionality
+    this.gemini = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+    if (process.env.OPENAI_API_KEY) this.openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    if (process.env.ANTHROPIC_API_KEY) this.anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     this.initializeProviders();
   }
 

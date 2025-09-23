@@ -1,87 +1,46 @@
-import { supabase } from '../src/supabaseConfig';
-import { rateLimitService } from './rateLimitService';
-import { GoogleGenAI } from '@google/genai';
+import { createClient } from '@supabase/supabase-js';
+import AdvancedGeminiProxy from '../advanced-gemini-proxy';
 
-const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY;
-const ai = API_KEY ? new GoogleGenAI({ apiKey: API_KEY }) : null;
+const supabase = createClient(
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
 
-// Generate embeddings for notes (ChatGPT plan requirement)
-export const generateEmbedding = async (text: string): Promise<number[]> => {
-  if (!ai) throw new Error('API key not configured');
-  
-  return rateLimitService.execute(async () => {
-    const response = await ai.models.embedContent({
-      model: 'text-embedding-004',
-      content: { parts: [{ text }] }
-    });
-    
-    return response.embedding.values;
-  });
-};
+class EmbeddingService {
+  private geminiProxy: AdvancedGeminiProxy;
 
-// Store embedding in database
-export const storeNoteEmbedding = async (noteId: string, text: string) => {
-  try {
-    const embedding = await generateEmbedding(text);
-    
-    const { error } = await supabase
-      .from('note_embeddings')
-      .insert({
-        note_id: noteId,
-        embedding
-      });
-    
-    if (error) throw error;
-    return { success: true };
-  } catch (error) {
-    console.error('Failed to store embedding:', error);
-    return { success: false, error };
+  constructor(geminiProxy: AdvancedGeminiProxy) {
+    this.geminiProxy = geminiProxy;
   }
-};
 
-// Similarity search for RAG
-export const findSimilarNotes = async (queryText: string, limit = 5) => {
-  try {
-    const queryEmbedding = await generateEmbedding(queryText);
-    
-    const { data, error } = await supabase.rpc('match_notes', {
-      query_embedding: queryEmbedding,
-      match_threshold: 0.7,
+  async generateEmbeddings(texts: string[], options?: { batchSize?: number }): Promise<{ embeddings: number[][] }> {
+    const result = await this.geminiProxy.generateEmbeddings(texts, {
+      batchSize: options?.batchSize || 10,
+      model: 'text-embedding-004'
+    });
+
+    // Store in DB
+    for (let i = 0; i < texts.length; i++) {
+      await supabase.from('embeddings').insert({
+        text: texts[i],
+        embedding: result.embeddings[i],
+        created_at: new Date().toISOString()
+      });
+    }
+
+    return result;
+  }
+
+  async searchSimilar(text: string, limit: number = 5): Promise<any[]> {
+    const embedding = await this.geminiProxy.generateEmbeddings([text]);
+    // Use Supabase vector search (rpc or pgvector)
+    const { data } = await supabase.rpc('match_embeddings', {
+      query_embedding: embedding.embeddings[0],
+      match_threshold: 0.78,
       match_count: limit
     });
-    
-    if (error) throw error;
-    return data;
-  } catch (error) {
-    console.error('Similarity search failed:', error);
-    return [];
+    return data || [];
   }
-};
+}
 
-// Batch embedding generation (nightly job)
-export const batchGenerateEmbeddings = async () => {
-  try {
-    // Get notes without embeddings
-    const { data: notes } = await supabase
-      .from('notes')
-      .select('id, content')
-      .not('id', 'in', 
-        supabase.from('note_embeddings').select('note_id')
-      )
-      .limit(10); // Process 10 at a time
-    
-    if (!notes || notes.length === 0) return { processed: 0 };
-    
-    // Batch process with rate limiting
-    const operations = notes.map(note => 
-      () => storeNoteEmbedding(note.id, note.content)
-    );
-    
-    await rateLimitService.batch(operations);
-    
-    return { processed: notes.length };
-  } catch (error) {
-    console.error('Batch embedding failed:', error);
-    return { processed: 0, error };
-  }
-};
+export const embeddingService = new EmbeddingService(new AdvancedGeminiProxy());

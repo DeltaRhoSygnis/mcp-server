@@ -1,0 +1,5 @@
+If you need to install a voice-to-text library like 'speech-recognition' or '@speechly/speechly',
+ run:\nnpm install speech-recognition\n\nNote: For now, we're using existing Gemini AI for parsing transcripts, so no new installs needed unless you want a specific voice API.
+\npm i jsonwebtoken @types/jsonwebtoken zod @types/zod ws @types/ws p-limit @types/p-limit openai @types/openai @anthropic-ai/sdk @types/anthropic-ai cohere-ai @huggingface/inference
+npm install openai @types/openai @anthropic-ai/sdk @types/anthropic-ai cohere-ai @huggingface/inference @types/node
+// Run npm i after for TS resolution.

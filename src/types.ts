@@ -1,5 +1,3 @@
-
-
 export interface Sale {
   id: string;
   date: string; // ISO string
@@ -78,3 +76,17 @@ export interface ParsedSaleFromAI {
     }[];
     payment: number;
 }
+
+export interface MockLLMResponse {
+  text: string;
+  model: 'gemini' | 'gpt-4' | 'claude-3';
+  error?: boolean;
+  tokens: number;
+}
+
+// Static analysis example:
+// const mockGemini = { text: '', model: 'gemini', error: true, tokens: 0 };
+// if (mockGemini.error) {
+//   const claude = { text: 'Parsed JSON', model: 'claude-3', tokens: 150 };
+//   // Assert fallback success
+// }

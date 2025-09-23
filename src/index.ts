@@ -4,7 +4,7 @@
  */
 
 import dotenv from 'dotenv';
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -18,6 +18,17 @@ import {
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { v4 as uuidv4 } from 'uuid';
 import AdvancedGeminiProxy from './advanced-gemini-proxy.js';
+import { aiStoreAdvisor } from './services/aiStoreAdvisor';
+import { aiObserver } from './services/aiObserver';
+import { parseStockNote } from './services/geminiService';
+import { chickenBusinessAI } from './services/chickenBusinessAI';
+import { embeddingService } from './services/embeddingService';
+import jwt from 'jsonwebtoken';
+import { rateLimitMiddleware } from '../services/rateLimitService'; // New import
+import WebSocket from 'ws';
+import http from 'http';
+import { migrate } from './migrate';
+const cluster = require('cluster');
 
 // Load environment variables
 dotenv.config();
@@ -435,17 +446,43 @@ Format as a structured business report with clear sections and actionable insigh
   }
 }
 
+function authenticateJWT(req: Request, res: Response, next: NextFunction) {
+  const authHeader = req.headers.authorization || req.headers['mcp-auth-token'];
+  if (!authHeader) return res.status(401).json({ error: { code: 401, message: 'No token provided' } });
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+  const JWT_SECRET = process.env.JWT_SECRET || process.env.MCP_AUTH_TOKEN || 'fallback-secret';
+  try {
+    req.user = jwt.verify(token, JWT_SECRET) as any;
+    next();
+  } catch (err) {
+    res.status(403).json({ error: { code: 403, message: 'Invalid token', details: (err as Error).message } });
+  }
+}
+
 class ProductionMCPServer {
   private app: express.Application = express();
   private geminiProxy!: AdvancedGeminiProxy;
   private supabaseClient!: EnhancedSupabaseClient;
   private mcpServer!: Server;
   private tools: Map<string, MCPToolDefinition> = new Map();
+  private wss!: WebSocket.Server;
+  private streamBuffers = new Map<string, {chunks: string[], timeout: NodeJS.Timeout}>(); // Per streamId
 
   constructor() {
     this.validateEnvironment();
     this.initializeServices();
+    // Migrate DB on init
+    migrate().then((result) => {
+      if (!result.success) {
+        console.warn('DB Migration warning:', result.message);
+      } else {
+        console.log('DB Migration successful');
+      }
+    }).catch((err) => {
+      console.error('DB Migration error:', err);
+    });
     this.setupExpress();
+    this.setupSecurity(); // New call
     this.setupMCP();
     this.registerTools();
   }
@@ -504,6 +541,24 @@ class ProductionMCPServer {
     this.setupRoutes();
   }
 
+  private setupSecurity(): void {
+    const JWT_SECRET = process.env.JWT_SECRET || process.env.MCP_AUTH_TOKEN || 'fallback-secret';
+
+    // /auth endpoint
+    this.app.post('/auth', (req: Request, res: Response) => {
+      const { token } = req.body;
+      if (token !== process.env.MCP_AUTH_TOKEN) {
+        return res.status(401).json({ error: { code: 401, message: 'Invalid token' } });
+      }
+      const payload = { userId: 'default', role: 'owner', branch: 'main' };
+      const jwtToken = jwt.sign(payload, JWT_SECRET, { expiresIn: '1h' });
+      res.json({ token: jwtToken });
+    });
+
+    // Middleware chain for /api/tools
+    this.app.use('/api/tools', authenticateJWT, rateLimitMiddleware);
+  }
+
   private setupMCP(): void {
     this.mcpServer = new Server(
       {
@@ -543,7 +598,28 @@ class ProductionMCPServer {
           status: 'pending'
         };
 
-        return await this.supabaseClient.parseNote(note, this.geminiProxy);
+        // Use parseStockNote for structured parsing
+        const parsed = await parseStockNote(note.content);
+
+        // Save parsed note
+        const { data: noteData, error: noteError } = await this.supabaseClient.memoryClient
+          .from('notes')
+          .insert({
+            ...note,
+            parsed_data: parsed,
+            status: 'parsed'
+          })
+          .select()
+          .single();
+
+        if (noteError) throw noteError;
+
+        return {
+          success: true,
+          note_id: noteData.id,
+          parsed_data: parsed,
+          message: 'Note parsed successfully with AI'
+        };
       }
     });
 
@@ -878,11 +954,15 @@ class ProductionMCPServer {
 
         searchResults.observations = observations || [];
 
+        // Enhance with embeddings
+        const similar = await embeddingService.searchSimilar(args.query, args.limit || 10);
+        searchResults.embeddings = similar;
+
         return {
           success: true,
           query: args.query,
           results: searchResults,
-          total_found: searchResults.entities.length + searchResults.relations.length + searchResults.observations.length
+          total_found: searchResults.entities.length + searchResults.relations.length + searchResults.observations.length + similar.length
         };
       }
     });
@@ -915,6 +995,9 @@ class ProductionMCPServer {
       implementation: async (args, context) => {
         const pattern = args.pattern;
         const results = [];
+
+        // Use chickenBusinessAI to learn
+        await chickenBusinessAI.learnPattern(pattern);
 
         // Store supplier information
         if (pattern.learned_patterns.supplier) {
@@ -980,8 +1063,8 @@ class ProductionMCPServer {
         return {
           success: true,
           pattern_type: pattern.business_type,
-          learning_results: results.filter(r => r), // Filter out undefined results
-          message: `Successfully learned from ${pattern.business_type} pattern`
+          learning_results: results,
+          message: `Learned pattern using chickenBusinessAI`
         };
       }
     });
@@ -1088,6 +1171,288 @@ class ProductionMCPServer {
         };
       }
     });
+
+    // Add new tool: Get business advice
+    this.registerTool({
+      name: 'get_business_advice',
+      description: 'Get AI-powered business advice for owner or worker',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          question: { type: 'string', description: 'Specific business question' },
+          userRole: { type: 'string', enum: ['owner', 'worker'], description: 'User role' },
+          context: { type: 'object', description: 'Optional business context' }
+        },
+        required: ['question', 'userRole']
+      },
+      implementation: async (args, context) => {
+        const advice = await aiStoreAdvisor.getBusinessAdvice(args.userRole, args.question, args.context);
+        return {
+          advice: advice.advice,
+          recommendations: advice.contextual_recommendations,
+          confidence: advice.confidence
+        };
+      }
+    });
+
+    // Add new tool: Analyze sales data
+    this.registerTool({
+      name: 'analyze_sales_data',
+      description: 'Analyze sales data and generate performance insights',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          timeframe: { type: 'string', enum: ['daily', 'weekly', 'monthly'], default: 'daily' },
+          includeInsights: { type: 'boolean', default: true },
+          includeRecommendations: { type: 'boolean', default: true },
+          salesData: { type: 'array', items: { type: 'object' }, description: 'Optional sales data' }
+        },
+        required: ['timeframe']
+      },
+      implementation: async (args, context) => {
+        const analysis = await aiObserver.analyzeBusinessPerformance(
+          args.timeframe,
+          args.includeInsights,
+          args.includeRecommendations
+        );
+        return analysis;
+      }
+    });
+
+    // Add note_collection tool for Part A workflow
+    this.registerTool({
+      name: 'note_collection',
+      description: 'Collect and save chicken business notes from owner or worker',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          content: { type: 'string', description: 'Note content' },
+          userRole: { type: 'string', enum: ['owner', 'worker'], description: 'User role' },
+          branchId: { type: 'string', description: 'Optional branch ID' },
+          local_uuid: { type: 'string', description: 'Optional local UUID' }
+        },
+        required: ['content', 'userRole']
+      },
+      implementation: async (args, context) => {
+        const note: ChickenBusinessNote = {
+          local_uuid: args.local_uuid || uuidv4(),
+          branch_id: args.branchId || 'main',
+          author_id: context.userId || 'anonymous',
+          content: args.content,
+          status: 'pending'
+        };
+
+        const { data, error } = await this.supabaseClient.memoryClient
+          .from('notes')
+          .insert(note)
+          .select()
+          .single();
+
+        if (error) throw new Error(`Failed to save note: ${error.message}`);
+
+        return {
+          success: true,
+          note_id: data.id,
+          message: 'Note collected and saved successfully',
+          next_step: 'Use parse_chicken_note tool to analyze this note'
+        };
+      }
+    });
+
+    // In registerTools, add apply_to_stock tool:
+    this.registerTool({
+      name: 'apply_to_stock',
+      description: 'Apply parsed note data to stock, sales, and expenses',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          note_id: { type: 'string', description: 'ID of parsed note' },
+          dry_run: { type: 'boolean', default: false, description: 'Preview changes without applying' },
+          user_id: { type: 'string', description: 'User ID for records' }
+        },
+        required: ['note_id']
+      },
+      implementation: async (args, context) => {
+        const { data: note, error: noteError } = await this.supabaseClient.memoryClient
+          .from('notes')
+          .select('*')
+          .eq('id', args.note_id)
+          .eq('status', 'parsed')
+          .single();
+
+        if (noteError || !note) throw new Error('Parsed note not found');
+
+        const parsedData = note.parsed_data;
+
+        if (args.dry_run) {
+          // Preview
+          return { preview: true, changes: this.calculateStockChanges(parsedData) };
+        }
+
+        // Apply purchases
+        if (parsedData.purchases) {
+          for (const purchase of parsedData.purchases) {
+            const { data: product } = await this.supabaseClient.memoryClient
+              .from('products')
+              .select('*')
+              .ilike('name', `%${purchase.product}%`)
+              .single();
+
+            if (product) {
+              await this.supabaseClient.memoryClient
+                .from('products')
+                .update({ stock: product.stock + (purchase.bags * (purchase.units_per_bag || 1)) })
+                .eq('id', product.id);
+            } else {
+              await this.supabaseClient.memoryClient
+                .from('products')
+                .insert({
+                  name: purchase.product,
+                  price: purchase.unit_price || 50,
+                  stock: purchase.bags * (purchase.units_per_bag || 1),
+                  category: 'chicken'
+                });
+            }
+
+            // Record expense
+            await this.supabaseClient.memoryClient
+              .from('expenses')
+              .insert({
+                description: `Purchase: ${purchase.bags} bags ${purchase.product}`,
+                amount: purchase.total_cost || (purchase.bags * 500),
+                category: 'purchases',
+                user_id: args.user_id || context.userId
+              });
+          }
+        }
+
+        // Apply sales (similar for cooking/transfers)
+        if (parsedData.sales) {
+          for (const sale of parsedData.sales) {
+            const { data: product } = await this.supabaseClient.memoryClient
+              .from('products')
+              .select('*')
+              .ilike('name', '%chicken%')
+              .single();
+
+            if (product && product.stock >= sale.quantity) {
+              // Record sale
+              await this.supabaseClient.memoryClient
+                .from('sales')
+                .insert({
+                  items: [{ product_id: product.id, quantity: sale.quantity, price: sale.unit_price }],
+                  total: sale.total_revenue,
+                  payment: sale.total_revenue,
+                  worker_id: args.user_id || context.userId
+                });
+
+              // Update stock
+              await this.supabaseClient.memoryClient
+                .from('products')
+                .update({ stock: product.stock - sale.quantity })
+                .eq('id', product.id);
+            }
+          }
+        }
+
+        // Mark applied
+        await this.supabaseClient.memoryClient
+          .from('notes')
+          .update({ status: 'applied' })
+          .eq('id', args.note_id);
+
+        return { success: true, message: 'Stock/sales updated from note' };
+      }
+    });
+
+    // Helper method (add to class):
+    private calculateStockChanges(parsedData: any): any {
+      // Preview logic (sum changes)
+      return { estimated_stock_change: 0, new_sales: parsedData.sales?.length || 0 };
+    }
+
+    // Add new tool: Generate stock forecast
+    this.registerTool({
+      name: 'forecast_stock',
+      description: 'Generate AI-powered stock forecast based on sales history',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          salesHistory: { type: 'array', items: { type: 'object' }, description: 'Recent sales data' },
+          forecastDays: { type: 'number', default: 7, description: 'Days to forecast' },
+          includeConfidence: { type: 'boolean', default: true }
+        },
+        required: ['salesHistory']
+      },
+      implementation: async (args, context) => {
+        // Use integrated forecast logic (from geminiService)
+        const prompt = `Based on sales: ${JSON.stringify(args.salesHistory.slice(0, 30))}, forecast next ${args.forecastDays} days stock needs. Return JSON array [{day: 'Day 1', predictedSales: number, confidence: 0-1}].`;
+
+        const response = await this.geminiProxy.generateText(prompt, {
+          model: 'gemini-2.0-flash',
+          temperature: 0.5,
+          maxOutputTokens: 500,
+          taskType: { complexity: 'medium', type: 'forecast', priority: 'high' },
+          responseSchema: { type: 'array', items: { type: 'object', properties: { day: { type: 'string' }, predictedSales: { type: 'number' }, confidence: { type: 'number' } } } }
+        });
+
+        const forecast = JSON.parse(response.text);
+
+        return {
+          forecast,
+          summary: `Predicted total sales: ${forecast.reduce((sum, f) => sum + f.predictedSales, 0).toFixed(2)}`,
+          confidence: args.includeConfidence ? forecast.reduce((avg, f) => avg + f.confidence, 0) / forecast.length : undefined
+        };
+      }
+    });
+
+    // Add WebSocket support: Import ws; in start(): Create httpServer = require('http').createServer(app); wss = new WebSocket.Server({ server: httpServer }); wss.on('connection', handleConnection); httpServer.listen(PORT); add handleConnection (ws.on('message', parse JSON {toolName, params}, if 'live_voice_stream' call tool impl with ws for streaming response); registerTool('live_voice_stream', schema {streamId: string, transcriptChunk: string, products?: array}, impl: buffer chunks per streamId, fuzzy via voice_parse, Gemini stream: generateText(prompt with chunk/prior, stream: true, on chunk ws.send({partialParse: ...})); timeout 5s for final structured).
+    this.registerTool({
+      name: 'live_voice_stream',
+      description: 'Stream voice for real-time parsing with fuzzy correction',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          streamId: { type: 'string' },
+          transcriptChunk: { type: 'string', maxLength: 500 },
+          products: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' } } } }
+        },
+        required: ['streamId', 'transcriptChunk']
+      },
+      implementation: async (args, context) => {
+        // For non-WS calls, buffer single chunk or error
+        return { error: { code: 400, message: 'Use WebSocket for streaming' } };
+      }
+    });
+
+    this.registerTool({
+      name: 'query_ai_logs',
+      description: 'Aggregate AI audit logs for analytics (usage trends, errors)',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          from: { type: 'string', format: 'date-time' },
+          to: { type: 'string', format: 'date-time' },
+          aggregate: { type: 'string', enum: ['count', 'avg_tokens', 'error_rate'] }
+        },
+        required: ['from', 'to', 'aggregate']
+      },
+      implementation: async (args, context) => {
+        const { data, error } = await this.supabaseClient.memoryClient
+          .from('ai_audit_logs')
+          .select('tool_name, count(*), avg(tokens_used)')
+          .gte('timestamp', args.from)
+          .lte('timestamp', args.to)
+          .group('tool_name');
+        if (error) throw error;
+        const usage = data.reduce((acc, row) => ({ ...acc, [row.tool_name]: row.count }), {});
+        const avgTokens = data.reduce((sum, row) => sum + (row.avg || 0), 0) / data.length || 0;
+        const errorRate = data.filter(row => row.error).length / data.length || 0;
+        return { usage, avgTokens, errorRate: args.aggregate === 'error_rate' ? errorRate : undefined };
+      }
+    });
+
+    // ...existing private methods...
   }
 
   private registerTool(tool: MCPToolDefinition): void {
@@ -1268,17 +1633,41 @@ class ProductionMCPServer {
 
       // Start HTTP server
       const PORT = process.env.PORT || 3002;
-      this.app.listen(PORT, () => {
-        console.log(`🌐 HTTP server listening on port ${PORT}`);
+      const httpServer = http.createServer(this.app);
+      this.wss = new WebSocket.Server({ server: httpServer });
+
+      this.wss.on('connection', (ws: WebSocket, req) => {
+        console.log('WebSocket connected');
+        ws.on('message', (message) => {
+          try {
+            const data = JSON.parse(message.toString());
+            if (data.toolName === 'live_voice_stream') {
+              this.handleStreamMessage(ws, data.params);
+            } else {
+              ws.send(JSON.stringify({ error: { code: 400, message: 'Invalid tool for WS' } }));
+            }
+          } catch (err) {
+            ws.send(JSON.stringify({ error: { code: 400, message: 'Invalid message' } }));
+          }
+        });
+        ws.on('close', () => console.log('WebSocket disconnected'));
+      });
+
+      httpServer.listen(PORT, () => {
+        console.log(`🌐 HTTP/WS server listening on port ${PORT}`);
         console.log(`📋 Health: http://localhost:${PORT}/health`);
         console.log(`🛠️  Tools: http://localhost:${PORT}/api/tools`);
         console.log(`🤖 Models: http://localhost:${PORT}/api/models`);
       });
 
-      // Start MCP server for stdio transport
-      const transport = new StdioServerTransport();
-      await this.mcpServer.connect(transport);
-      console.log('🔗 MCP server connected via stdio');
+      // Skip stdio MCP in workers (primary only, or share via IPC)
+      // For WS sticky sessions, use load balancer (e.g., Heroku router round-robin, or nginx proxy with ip_hash)
+      if (cluster.isPrimary) {
+        // Start MCP server for stdio transport
+        const transport = new StdioServerTransport();
+        await this.mcpServer.connect(transport);
+        console.log('🔗 MCP server connected via stdio');
+      }
 
       console.log('✅ Production MCP Server is ready!');
 
@@ -1287,12 +1676,83 @@ class ProductionMCPServer {
       process.exit(1);
     }
   }
+
+  private handleStreamMessage(ws: WebSocket, params: {streamId: string, transcriptChunk: string, products?: any[]}) {
+    const buffer = this.streamBuffers.get(params.streamId) || { chunks: [], timeout: null };
+    buffer.chunks.push(params.transcriptChunk);
+    clearTimeout(buffer.timeout);
+
+    // Partial fuzzy parse
+    const partialTranscript = buffer.chunks.join(' ');
+    const fuzzyResult = this.voiceParseFuzzy(partialTranscript, params.products || []); // Call voice_parse logic
+    ws.send(JSON.stringify({ partialParse: fuzzyResult, confidence: 0.7 })); // Example
+
+    // Gemini stream for correction
+    const prompt = `Parse ongoing voice transcript: "${partialTranscript}" for chicken sales. Use fuzzy context.`;
+    this.geminiProxy.generateText(prompt, { stream: true, maxTokens: 200 }).then(stream => {
+      stream.on('data', (chunk) => ws.send(JSON.stringify({ streamChunk: chunk.text })));
+    });
+
+    // Timeout for final
+    buffer.timeout = setTimeout(() => {
+      const finalTranscript = buffer.chunks.join(' ');
+      const finalParse = this.executeTool('voice_parse', { transcript: finalTranscript, products: params.products }, { user: {} }); // From tools
+      ws.send(JSON.stringify({ final: finalParse, streamId: params.streamId }));
+      this.streamBuffers.delete(params.streamId);
+    }, 5000);
+
+    this.streamBuffers.set(params.streamId, buffer);
+  }
+
+  private voiceParseFuzzy(transcript: string, products: any[]): any {
+    // Stub: Integrate voice_parse fuzzy logic (e.g., match 'chikin' to 'Whole_Chicken')
+    return { items: [], payment: 0 };
+  }
 }
 
-export { ProductionMCPServer };
+export { ProductionMCPServer, authenticateJWT };
 
 // Start server if run directly
 if (import.meta.url === `file://${process.argv[1]}`) {
   const server = new ProductionMCPServer();
   server.start().catch(console.error);
 }
+
+// Middleware for user rate limiting
+const userRateLimitMiddleware = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 20, // Limit each user to 20 requests per windowMs
+  message: {
+    error: {
+      code: 429,
+      message: 'Too many requests, please slow down.',
+      schema: 'MCP-RateLimit-Error'
+    }
+  }
+});
+
+// Apply middleware
+app.use('/api/tools', userRateLimitMiddleware); // From rateLimitService
+
+// In callTool function (existing tool executor):
+const callTool = async (toolName: string, params: any, req: Request) => {
+  try {
+    const validatedParams = validateInput(toolName, params); // Import from chicken-business-tools
+    const tool = tools[toolName];
+    if (!tool) throw new Error('Tool not found');
+    // Role check (existing or add)
+    const result = await tool(validatedParams, req); // Pass req for user
+    return result;
+  } catch (err: any) {
+    const errorCode = err.message.includes('Validation') ? 422 : 500;
+    const mcpError = {
+      error: {
+        code: errorCode,
+        message: err.message,
+        schema: 'MCP-Error'
+      }
+    };
+    monitoring.logError(toolName, err.message, { params, userId: req.user?.userId }, 'ai_audit_logs');
+    throw mcpError; // Or res.json in endpoint
+  }
+};

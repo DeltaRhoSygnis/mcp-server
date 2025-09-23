@@ -28,6 +28,11 @@ import { rateLimitMiddleware } from '../services/rateLimitService'; // New impor
 import WebSocket from 'ws';
 import http from 'http';
 import { migrate } from './migrate';
+import { mcpStandardTools, mcpStandardSchemas } from './tools/mcp-standard-tools';
+import { filesystemMCPTools, filesystemSchemas } from './tools/filesystem-tools';
+import { ChatWebSocketService } from './services/chatWebSocketService';
+import { aiTrainingService } from './services/aiTrainingService';
+import { unifiedAIService } from './services/unifiedAIService';
 const cluster = require('cluster');
 
 // Load environment variables
@@ -467,6 +472,7 @@ class ProductionMCPServer {
   private tools: Map<string, MCPToolDefinition> = new Map();
   private wss!: WebSocket.Server;
   private streamBuffers = new Map<string, {chunks: string[], timeout: NodeJS.Timeout}>(); // Per streamId
+  private chatWebSocketService?: ChatWebSocketService;
 
   constructor() {
     this.validateEnvironment();
@@ -1365,12 +1371,6 @@ class ProductionMCPServer {
       }
     });
 
-    // Helper method (add to class):
-    private calculateStockChanges(parsedData: any): any {
-      // Preview logic (sum changes)
-      return { estimated_stock_change: 0, new_sales: parsedData.sales?.length || 0 };
-    }
-
     // Add new tool: Generate stock forecast
     this.registerTool({
       name: 'forecast_stock',
@@ -1452,7 +1452,158 @@ class ProductionMCPServer {
       }
     });
 
-    // ...existing private methods...
+    // Register MCP Standard Protocol Tools
+    this.registerMCPStandardTools();
+
+    // Register Filesystem Tools
+    this.registerFilesystemTools();
+  }
+
+  /**
+   * Helper method for calculating stock changes
+   */
+  private calculateStockChanges(parsedData: any): any {
+    // Preview logic (sum changes)
+    return { estimated_stock_change: 0, new_sales: parsedData.sales?.length || 0 };
+  }
+
+  /**
+   * Register MCP Standard Protocol Tools
+   */
+  private registerMCPStandardTools(): void {
+    // Memory tools
+    this.registerTool({
+      name: 'mcp_memory_create_entities',
+      description: 'Create multiple new entities in the knowledge graph',
+      inputSchema: mcpStandardSchemas.mcp_memory_create_entities,
+      implementation: async (args, context) => {
+        return await mcpStandardTools.mcp_memory_create_entities(args);
+      }
+    });
+
+    this.registerTool({
+      name: 'mcp_memory_create_relations',
+      description: 'Create multiple new relations between entities in the knowledge graph',
+      inputSchema: mcpStandardSchemas.mcp_memory_create_relations,
+      implementation: async (args, context) => {
+        return await mcpStandardTools.mcp_memory_create_relations(args);
+      }
+    });
+
+    this.registerTool({
+      name: 'mcp_memory_search_nodes',
+      description: 'Search for nodes in the knowledge graph based on a query',
+      inputSchema: mcpStandardSchemas.mcp_memory_search_nodes,
+      implementation: async (args, context) => {
+        return await mcpStandardTools.mcp_memory_search_nodes(args);
+      }
+    });
+
+    this.registerTool({
+      name: 'mcp_memory_read_graph',
+      description: 'Read the entire knowledge graph',
+      inputSchema: mcpStandardSchemas.mcp_memory_read_graph,
+      implementation: async (args, context) => {
+        return await mcpStandardTools.mcp_memory_read_graph();
+      }
+    });
+
+    this.registerTool({
+      name: 'mcp_memory_add_observations',
+      description: 'Add new observations to existing entities in the knowledge graph',
+      inputSchema: mcpStandardSchemas.mcp_memory_add_observations,
+      implementation: async (args, context) => {
+        return await mcpStandardTools.mcp_memory_add_observations(args);
+      }
+    });
+
+    this.registerTool({
+      name: 'mcp_memory_delete_entities',
+      description: 'Delete multiple entities and their associated relations from the knowledge graph',
+      inputSchema: mcpStandardSchemas.mcp_memory_delete_entities,
+      implementation: async (args, context) => {
+        return await mcpStandardTools.mcp_memory_delete_entities(args);
+      }
+    });
+
+    // Sequential thinking tools
+    this.registerTool({
+      name: 'mcp_sequentialthinking_sequentialthinking',
+      description: 'Dynamic and reflective problem-solving through structured thoughts',
+      inputSchema: mcpStandardSchemas.mcp_sequentialthinking_sequentialthinking,
+      implementation: async (args, context) => {
+        return await mcpStandardTools.mcp_sequentialthinking_sequentialthinking(args);
+      }
+    });
+
+    // Fetch tool
+    this.registerTool({
+      name: 'fetch_webpage',
+      description: 'Fetches the main content from a web page',
+      inputSchema: mcpStandardSchemas.fetch_webpage,
+      implementation: async (args, context) => {
+        return await mcpStandardTools.fetch_webpage(args);
+      }
+    });
+  }
+
+  /**
+   * Register Filesystem Tools
+   */
+  private registerFilesystemTools(): void {
+    this.registerTool({
+      name: 'filesystem_read',
+      description: 'Read file content with business context awareness',
+      inputSchema: filesystemSchemas.filesystem_read,
+      implementation: async (args, context) => {
+        return await filesystemMCPTools.filesystem_read(args);
+      }
+    });
+
+    this.registerTool({
+      name: 'filesystem_write',
+      description: 'Write file content with business validation',
+      inputSchema: filesystemSchemas.filesystem_write,
+      implementation: async (args, context) => {
+        return await filesystemMCPTools.filesystem_write(args);
+      }
+    });
+
+    this.registerTool({
+      name: 'filesystem_list',
+      description: 'List directory contents with business file classification',
+      inputSchema: filesystemSchemas.filesystem_list,
+      implementation: async (args, context) => {
+        return await filesystemMCPTools.filesystem_list(args);
+      }
+    });
+
+    this.registerTool({
+      name: 'filesystem_delete',
+      description: 'Delete file or directory with business impact analysis',
+      inputSchema: filesystemSchemas.filesystem_delete,
+      implementation: async (args, context) => {
+        return await filesystemMCPTools.filesystem_delete(args);
+      }
+    });
+
+    this.registerTool({
+      name: 'filesystem_copy',
+      description: 'Copy file with business metadata preservation',
+      inputSchema: filesystemSchemas.filesystem_copy,
+      implementation: async (args, context) => {
+        return await filesystemMCPTools.filesystem_copy(args);
+      }
+    });
+
+    this.registerTool({
+      name: 'filesystem_search',
+      description: 'Search files by content with business intelligence',
+      inputSchema: filesystemSchemas.filesystem_search,
+      implementation: async (args, context) => {
+        return await filesystemMCPTools.filesystem_search(args);
+      }
+    });
   }
 
   private registerTool(tool: MCPToolDefinition): void {
@@ -1597,6 +1748,104 @@ class ProductionMCPServer {
       });
     });
 
+    // Chat API endpoints
+    this.app.post('/api/chat', async (req, res) => {
+      try {
+        const { userId, message, role, sessionId, context } = req.body;
+        
+        if (!userId || !message || !role) {
+          return res.status(400).json({ error: 'Missing required fields' });
+        }
+
+        const response = await unifiedAIService.processChat(userId, message, {
+          role,
+          sessionId,
+          ...context
+        });
+
+        res.json(response);
+      } catch (error) {
+        console.error('Chat API error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+
+    // Training data collection endpoint
+    this.app.post('/api/training/collect', async (req, res) => {
+      try {
+        const { userId, userInput, aiResponse, role, context, feedback } = req.body;
+        
+        await aiTrainingService.collectInteractionData(
+          userId,
+          userInput,
+          aiResponse,
+          role,
+          context,
+          feedback
+        );
+
+        res.json({ success: true });
+      } catch (error) {
+        console.error('Training collection error:', error);
+        res.status(500).json({ error: 'Failed to collect training data' });
+      }
+    });
+
+    // Admin training endpoints
+    this.app.post('/api/admin/training/session', async (req, res) => {
+      try {
+        const { name, description, dataFilter } = req.body;
+        const sessionId = await aiTrainingService.createTrainingSession(name, description, dataFilter);
+        res.json({ sessionId });
+      } catch (error) {
+        console.error('Training session error:', error);
+        res.status(500).json({ error: 'Failed to create training session' });
+      }
+    });
+
+    this.app.get('/api/admin/training/insights', async (req, res) => {
+      try {
+        const insights = await aiTrainingService.generateTrainingInsights();
+        res.json(insights);
+      } catch (error) {
+        console.error('Training insights error:', error);
+        res.status(500).json({ error: 'Failed to generate insights' });
+      }
+    });
+
+    this.app.post('/api/admin/training/optimize-role/:role', async (req, res) => {
+      try {
+        const { role } = req.params;
+        const optimization = await aiTrainingService.optimizeRoleResponses(role);
+        res.json(optimization);
+      } catch (error) {
+        console.error('Role optimization error:', error);
+        res.status(500).json({ error: 'Failed to optimize role' });
+      }
+    });
+
+    this.app.get('/api/admin/patterns/workflow', async (req, res) => {
+      try {
+        const patterns = await aiTrainingService.analyzeWorkflowPatterns();
+        res.json(patterns);
+      } catch (error) {
+        console.error('Workflow pattern error:', error);
+        res.status(500).json({ error: 'Failed to analyze patterns' });
+      }
+    });
+
+    // Chat statistics endpoint
+    this.app.get('/api/chat/stats', (req, res) => {
+      if (this.chatWebSocketService) {
+        const stats = this.chatWebSocketService.getSessionStats();
+        res.json(stats);
+      } else {
+        res.status(503).json({ error: 'Chat service not available' });
+      }
+    });
+
+    console.log('✅ Chat and training API endpoints registered');
+
     // Error handlers
     this.app.use((error: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
       console.error('Unhandled error:', error);
@@ -1613,7 +1862,14 @@ class ProductionMCPServer {
           'GET /health',
           'GET /api/tools',
           'POST /api/tools/call',
-          'GET /api/models'
+          'GET /api/models',
+          'POST /api/chat',
+          'POST /api/training/collect',
+          'POST /api/admin/training/session',
+          'GET /api/admin/training/insights',
+          'POST /api/admin/training/optimize-role/:role',
+          'GET /api/admin/patterns/workflow',
+          'GET /api/chat/stats'
         ]
       });
     });
@@ -1652,6 +1908,10 @@ class ProductionMCPServer {
         });
         ws.on('close', () => console.log('WebSocket disconnected'));
       });
+
+      // Initialize chat WebSocket service
+      this.chatWebSocketService = new ChatWebSocketService(this.wss);
+      console.log('✅ Chat WebSocket service initialized');
 
       httpServer.listen(PORT, () => {
         console.log(`🌐 HTTP/WS server listening on port ${PORT}`);
@@ -1717,42 +1977,3 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const server = new ProductionMCPServer();
   server.start().catch(console.error);
 }
-
-// Middleware for user rate limiting
-const userRateLimitMiddleware = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 20, // Limit each user to 20 requests per windowMs
-  message: {
-    error: {
-      code: 429,
-      message: 'Too many requests, please slow down.',
-      schema: 'MCP-RateLimit-Error'
-    }
-  }
-});
-
-// Apply middleware
-app.use('/api/tools', userRateLimitMiddleware); // From rateLimitService
-
-// In callTool function (existing tool executor):
-const callTool = async (toolName: string, params: any, req: Request) => {
-  try {
-    const validatedParams = validateInput(toolName, params); // Import from chicken-business-tools
-    const tool = tools[toolName];
-    if (!tool) throw new Error('Tool not found');
-    // Role check (existing or add)
-    const result = await tool(validatedParams, req); // Pass req for user
-    return result;
-  } catch (err: any) {
-    const errorCode = err.message.includes('Validation') ? 422 : 500;
-    const mcpError = {
-      error: {
-        code: errorCode,
-        message: err.message,
-        schema: 'MCP-Error'
-      }
-    };
-    monitoring.logError(toolName, err.message, { params, userId: req.user?.userId }, 'ai_audit_logs');
-    throw mcpError; // Or res.json in endpoint
-  }
-};

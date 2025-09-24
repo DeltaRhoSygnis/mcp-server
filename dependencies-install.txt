@@ -1,10 +1,25 @@
-If you need to install a voice-to-text library like 'speech-recognition' or '@speechly/speechly',
- run:\nnpm install speech-recognition\n\nNote: For now, we're using existing Gemini AI for parsing transcripts, so no new installs needed unless you want a specific voice API.
-\npm i jsonwebtoken @types/jsonwebtoken zod @types/zod ws @types/ws p-limit @types/p-limit openai @types/openai @anthropic-ai/sdk @types/anthropic-ai cohere-ai @huggingface/inference
-npm install openai @types/openai @anthropic-ai/sdk @types/anthropic-ai cohere-ai @huggingface/inference @types/node
-// Run npm i after for TS resolution.
-npm install dotenv express cors express-rate-limit uuid jsonwebtoken ws zod
-npm install --save-dev @types/node @types/express @types/cors @types/uuid @types/jsonwebtoken @types/ws
+# CORRECT DEPENDENCIES FOR CHARNOKS MCP SERVER
+# This project uses: Gemini (primary), OpenRouter, Cohere, HuggingFace
+# NO OpenAI or Anthropic direct APIs
+
+# === PRODUCTION DEPENDENCIES ===
+npm install @google-cloud/language @google/generative-ai @huggingface/inference @modelcontextprotocol/sdk @supabase/supabase-js cohere-ai cors dotenv express express-rate-limit node-fetch openai uuid jsonwebtoken zod ws p-limit
+
+# === DEVELOPMENT DEPENDENCIES ===
+npm install --save-dev @jest/globals @types/cors @types/express @types/jest @types/node @types/uuid @types/jsonwebtoken @types/ws @types/p-limit jest tsx typescript
+
+# === IMPORTANT NOTES ===
+# - We keep 'openai' package for OpenRouter compatibility (uses OpenAI API format)
+# - NO @anthropic-ai/sdk needed (we use OpenRouter instead)
+# - Cohere and HuggingFace are for additional model diversity
+# - Gemini is the primary AI provider
+
+# === ENVIRONMENT VARIABLES NEEDED ===
+# Required: GEMINI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+# Optional: OPENROUTER_API_KEY, COHERE_API_KEY, HF_TOKEN
+# See .env.example for complete list
+
+# === DOCKER DEPLOYMENT ===
 # Build once, run anywhere
 docker build -t charnoks-mcp-server .
 

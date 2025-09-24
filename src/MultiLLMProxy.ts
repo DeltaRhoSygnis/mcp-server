@@ -1,50 +1,86 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import OpenAI from 'openai';
-import { Anthropic } from '@anthropic-ai/sdk';
+import { CohereClient } from 'cohere-ai';
+import { HfInference } from '@huggingface/inference';
 
 export class MultiLLMProxy {
   private gemini: GoogleGenerativeAI;
-  private openai: OpenAI | null = null;
-  private anthropic: Anthropic | null = null;
+  private openrouter: OpenAI | null = null; // OpenRouter uses OpenAI-compatible API
+  private cohere: CohereClient | null = null;
+  private hf: HfInference | null = null;
   private monitoring: any; // Import from monitoring.ts
 
   constructor() {
     this.gemini = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-    if (process.env.OPENAI_API_KEY) this.openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    if (process.env.ANTHROPIC_API_KEY) this.anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    
+    // Initialize OpenRouter (OpenAI-compatible API)
+    if (process.env.OPENROUTER_API_KEY) {
+      this.openrouter = new OpenAI({
+        apiKey: process.env.OPENROUTER_API_KEY,
+        baseURL: 'https://openrouter.ai/api/v1'
+      });
+    }
+    
+    // Initialize Cohere
+    if (process.env.COHERE_API_KEY) {
+      this.cohere = new CohereClient({ token: process.env.COHERE_API_KEY });
+    }
+    
+    // Initialize Hugging Face
+    if (process.env.HF_TOKEN) {
+      this.hf = new HfInference(process.env.HF_TOKEN);
+    }
+    
     // Assume monitoring imported
   }
 
   async generateText(prompt: string, options: any = {}) {
-    // Priority: Gemini > Claude > OpenAI
+    // Priority: Gemini > Cohere > HuggingFace > OpenRouter
     try {
       const model = options.model || 'gemini-1.5-flash';
       return await this.gemini.getGenerativeModel(model).generateContent(prompt, options);
     } catch (geminiErr) {
-      console.warn('Gemini failed, falling back to Claude:', geminiErr);
-      this.monitoring.logError('llm_fallback', 'gemini_to_claude', { prompt, error: geminiErr });
-      if (this.anthropic) {
+      console.warn('Gemini failed, falling back to Cohere:', geminiErr);
+      this.monitoring?.logError('llm_fallback', 'gemini_to_cohere', { prompt, error: geminiErr });
+      
+      if (this.cohere) {
         try {
-          const response = await this.anthropic.messages.create({
-            model: 'claude-3-opus-20240229',
+          const response = await this.cohere.generate({
+            model: 'command-r-plus',
+            prompt: prompt,
             max_tokens: options.maxTokens || 1000,
-            messages: [{ role: 'user', content: prompt }]
+            temperature: options.temperature || 0.3
           });
-          return { text: response.content[0].text, model: 'claude' };
-        } catch (claudeErr) {
-          console.warn('Claude failed, falling back to OpenAI:', claudeErr);
-          this.monitoring.logError('llm_fallback', 'claude_to_openai', { prompt, error: claudeErr });
-          if (this.openai) {
-            const response = await this.openai.chat.completions.create({
-              model: 'gpt-4',
-              messages: [{ role: 'user', content: prompt }],
-              max_tokens: options.maxTokens || 1000
-            });
-            return { text: response.choices[0].message.content, model: 'gpt-4' };
+          return { text: response.generations[0].text, model: 'cohere' };
+        } catch (cohereErr) {
+          console.warn('Cohere failed, falling back to HuggingFace:', cohereErr);
+          this.monitoring?.logError('llm_fallback', 'cohere_to_hf', { prompt, error: cohereErr });
+          
+          if (this.hf) {
+            try {
+              const response = await this.hf.textGeneration({
+                model: 'microsoft/DialoGPT-medium',
+                inputs: prompt,
+                parameters: { max_new_tokens: options.maxTokens || 1000 }
+              });
+              return { text: response.generated_text, model: 'huggingface' };
+            } catch (hfErr) {
+              console.warn('HuggingFace failed, falling back to OpenRouter:', hfErr);
+              this.monitoring?.logError('llm_fallback', 'hf_to_openrouter', { prompt, error: hfErr });
+              
+              if (this.openrouter) {
+                const response = await this.openrouter.chat.completions.create({
+                  model: 'anthropic/claude-3.5-sonnet',
+                  messages: [{ role: 'user', content: prompt }],
+                  max_tokens: options.maxTokens || 1000
+                });
+                return { text: response.choices[0].message?.content || '', model: 'openrouter' };
+              }
+            }
           }
         }
       }
-      throw new Error('All LLMs failed');
+      throw new Error('All LLM providers failed');
     }
   }
 

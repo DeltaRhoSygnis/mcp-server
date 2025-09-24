@@ -1,19 +1,22 @@
 /**
- * Memory Integration Service for Chicken Business AI
- * Browser-compatible version with local storage backing
- * Enables persistent learning and intelligent context for your AI system
+ * Chicken Business Memory Service
+ * Clean browser-compatible implementation with graceful fallback when localStorage is unavailable.
+ * Provides lightweight knowledge graph style storage for entities, relations, observations.
  */
 
-// Remove Node.js dependencies for browser compatibility
-// import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-// import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-// import { spawn } from 'child_process';
-import type { ChickenBusinessPattern } from './chickenBusinessAI';
+// Local type definitions (decoupled from other possibly missing files)
+interface ChickenBusinessPattern {
+  business_type: 'purchase' | 'processing' | 'distribution' | 'cooking' | 'sales' | 'general';
+  confidence_score: number;
+  learned_patterns: Record<string, any>;
+}
 
 interface BusinessEntity {
   name: string;
   entityType: 'supplier' | 'customer' | 'worker' | 'branch' | 'product' | 'business_period';
   attributes?: Record<string, any>;
+  created?: string;
+  lastUpdated?: string;
 }
 
 interface BusinessRelation {
@@ -21,6 +24,8 @@ interface BusinessRelation {
   to: string;
   relationType: string;
   metadata?: Record<string, any>;
+  created?: string;
+  lastUpdated?: string;
 }
 
 interface BusinessObservation {
@@ -29,35 +34,44 @@ interface BusinessObservation {
   timestamp: string;
   confidence?: number;
   source: 'ai_learning' | 'user_input' | 'system_analysis';
+  id?: string;
+  created?: string;
+}
+
+interface MemoryDataShape {
+  entities: BusinessEntity[];
+  relations: BusinessRelation[];
+  observations: BusinessObservation[];
+  patterns: any[]; // reserved for future richer pattern storage
+  contexts: Record<string, any>;
 }
 
 export class ChickenBusinessMemoryService {
   private storageKey = 'chicken_business_memory';
   private isInitialized = false;
+  private fallback: MemoryDataShape = { entities: [], relations: [], observations: [], patterns: [], contexts: {} };
+
+  private hasLocalStorage(): boolean {
+    try {
+      return typeof localStorage !== 'undefined';
+    } catch {
+      return false;
+    }
+  }
 
   /**
    * Initialize browser-compatible memory service using localStorage
    */
   async initialize(): Promise<boolean> {
     try {
-      console.log('🧠 Initializing Chicken Business Memory Service (Browser Mode)...');
-      
-      // Initialize localStorage structure if it doesn't exist
-      if (!localStorage.getItem(this.storageKey)) {
-        localStorage.setItem(this.storageKey, JSON.stringify({
-          entities: [],
-          relations: [],
-          patterns: [],
-          contexts: {}
-        }));
+      if (this.hasLocalStorage()) {
+        if (!localStorage.getItem(this.storageKey)) {
+          localStorage.setItem(this.storageKey, JSON.stringify(this.fallback));
+        }
       }
-      
       this.isInitialized = true;
-      console.log('✅ Memory service initialized successfully');
       return true;
-
     } catch (error) {
-      console.error('❌ Failed to initialize memory service:', error);
       this.isInitialized = false;
       return false;
     }
@@ -66,25 +80,22 @@ export class ChickenBusinessMemoryService {
   /**
    * Get memory data from localStorage
    */
-  private getMemoryData(): any {
+  private getMemoryData(): MemoryDataShape {
+    if (!this.hasLocalStorage()) return this.fallback;
     try {
       const data = localStorage.getItem(this.storageKey);
-      return data ? JSON.parse(data) : { entities: [], relations: [], patterns: [], contexts: {} };
-    } catch (error) {
-      console.warn('Failed to parse memory data:', error);
-      return { entities: [], relations: [], patterns: [], contexts: {} };
+      return data ? JSON.parse(data) as MemoryDataShape : this.fallback;
+    } catch {
+      return this.fallback;
     }
   }
 
   /**
    * Save memory data to localStorage
    */
-  private saveMemoryData(data: any): void {
-    try {
-      localStorage.setItem(this.storageKey, JSON.stringify(data));
-    } catch (error) {
-      console.warn('Failed to save memory data:', error);
-    }
+  private saveMemoryData(data: MemoryDataShape): void {
+    if (!this.hasLocalStorage()) { this.fallback = data; return; }
+    try { localStorage.setItem(this.storageKey, JSON.stringify(data)); } catch { /* ignore */ }
   }
 
   /**
@@ -134,17 +145,6 @@ export class ChickenBusinessMemoryService {
    * Create relationships between business entities
    */
   async createBusinessRelation(relation: BusinessRelation): Promise<boolean> {
-    if (!this.isConnected || !this.memoryClient) {
-      console.warn('Memory service not connected');
-      return false;
-    }
-
-    try {
-      await this.memoryClient.request({
-  /**
-   * Create relationships between business entities
-   */
-  async createBusinessRelation(relation: BusinessRelation): Promise<boolean> {
     if (!this.isInitialized) {
       console.warn('Memory service not initialized');
       return false;
@@ -170,6 +170,19 @@ export class ChickenBusinessMemoryService {
         memoryData.relations.push({
           ...relation,
           created: new Date().toISOString(),
+          lastUpdated: new Date().toISOString()
+        });
+      }
+      
+      this.saveMemoryData(memoryData);
+      console.log(`✅ Created relation: ${relation.from} -> ${relation.to} (${relation.relationType})`);
+      return true;
+
+    } catch (error) {
+      console.error(`❌ Failed to create relation:`, error);
+      return false;
+    }
+  }
   /**
    * Add observations about business entities (learning from patterns)
    */
@@ -181,13 +194,7 @@ export class ChickenBusinessMemoryService {
 
     try {
       const memoryData = this.getMemoryData();
-      
-      // Initialize observations array if it doesn't exist
-      if (!memoryData.observations) {
-        memoryData.observations = [];
-      }
-      
-      // Add new observation
+      // Add observation
       memoryData.observations.push({
         ...observation,
         id: Date.now().toString(),
@@ -199,10 +206,15 @@ export class ChickenBusinessMemoryService {
       return true;
 
     } catch (error) {
+      console.warn('Failed to add observation:', error);
+      return false;
+    }
+  }
+
   /**
    * Search memory for relevant business context
    */
-  async searchBusinessContext(query: string): Promise<any[]> {
+  async searchBusinessContext(query: string): Promise<Array<{ type: 'entity' | 'observation'; data: any }>> {
     if (!this.isInitialized) {
       console.warn('Memory service not initialized');
       return [];
@@ -232,15 +244,6 @@ export class ChickenBusinessMemoryService {
       return results;
 
     } catch (error) {
-      console.error('❌ Failed to search memory:', error);
-      return [];
-    }
-  }
-
-      return result.content || [];
-
-    } catch (error) {
-      console.error('❌ Failed to search memory:', error);
       return [];
     }
   }
@@ -250,8 +253,6 @@ export class ChickenBusinessMemoryService {
    */
   async learnFromPattern(pattern: ChickenBusinessPattern): Promise<void> {
     if (!pattern.learned_patterns) return;
-
-    console.log('🧠 Learning from pattern:', pattern.business_type);
 
     try {
       // Store supplier information
@@ -422,39 +423,31 @@ export class ChickenBusinessMemoryService {
 
   private async storePatternObservations(pattern: ChickenBusinessPattern): Promise<void> {
     const timestamp = new Date().toISOString();
-    
-    // Store business operation patterns
     await this.addBusinessObservation({
-      entityName: `Business_Operations`,
-      observation: `${pattern.business_type} operation completed with confidence ${pattern.confidence_score}`,
+      entityName: 'Business_Operations',
+      observation: `${pattern.business_type} operation completed (confidence ${pattern.confidence_score})`,
       timestamp,
-  /**
-   * Cleanup connection
-   */
+      source: 'ai_learning',
+      confidence: pattern.confidence_score
+    });
+  }
+
+  private extractPotentialEntities(noteText: string): string[] {
+    const entities: string[] = [];
+    const t = noteText.toLowerCase();
+    if (t.includes('magnolia')) entities.push('Magnolia_Supplier');
+    if (t.includes('san miguel')) entities.push('San_Miguel_Supplier');
+    if (t.includes('whole')) entities.push('Whole_Chicken');
+    if (t.includes('parts')) entities.push('Chicken_Parts');
+    if (t.includes('neck')) entities.push('Chicken_Necks');
+    if (t.includes('worker')) entities.push('Worker_Generic');
+    if (t.includes('branch')) entities.push('Branch_Generic');
+    return Array.from(new Set(entities));
+  }
+
   async disconnect(): Promise<void> {
     if (this.isInitialized) {
       this.isInitialized = false;
-      console.log('🔌 Memory service disconnected');
-    }
-  }
-    if (text.includes('san miguel')) entities.push('San_Miguel_Supplier');
-
-    // Look for products
-    if (text.includes('chicken')) entities.push('Whole_Chicken');
-    if (text.includes('parts')) entities.push('Chicken_Parts');
-    if (text.includes('necks')) entities.push('Chicken_Necks');
-
-    return entities;
-  }
-
-  /**
-   * Cleanup connection
-   */
-  async disconnect(): Promise<void> {
-    if (this.memoryClient && this.isConnected) {
-      await this.memoryClient.close();
-      this.isConnected = false;
-      console.log('🔌 Memory service disconnected');
     }
   }
 }

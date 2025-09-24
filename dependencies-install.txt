@@ -3,3 +3,20 @@ If you need to install a voice-to-text library like 'speech-recognition' or '@sp
 \npm i jsonwebtoken @types/jsonwebtoken zod @types/zod ws @types/ws p-limit @types/p-limit openai @types/openai @anthropic-ai/sdk @types/anthropic-ai cohere-ai @huggingface/inference
 npm install openai @types/openai @anthropic-ai/sdk @types/anthropic-ai cohere-ai @huggingface/inference @types/node
 // Run npm i after for TS resolution.
+npm install dotenv express cors express-rate-limit uuid jsonwebtoken ws zod
+npm install --save-dev @types/node @types/express @types/cors @types/uuid @types/jsonwebtoken @types/ws
+# Build once, run anywhere
+docker build -t charnoks-mcp-server .
+
+# Run locally
+docker run -p 3002:3002 charnoks-mcp-server
+
+# Deploy to production with same command
+docker run -d --name production-mcp \
+  -p 3002:3002 \
+  -e NODE_ENV=production \
+  charnoks-mcp-server
+
+# Scale up easily
+docker run -d --name mcp-instance-2 -p 3003:3002 charnoks-mcp-server
+docker run -d --name mcp-instance-3 -p 3004:3002 charnoks-mcp-server

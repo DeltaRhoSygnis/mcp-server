@@ -440,7 +440,10 @@ Return array of strings: ["recommendation1", "recommendation2", ...]
   }
 }
 
-// Export singleton instance
+// Export class for instantiation by MCP tools
+export { AIObserverService };
+
+// Export singleton instance for direct usage
 export const aiObserver = new AIObserverService(new AdvancedGeminiProxy());
 
 // Export types

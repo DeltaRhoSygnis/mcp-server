@@ -110,13 +110,12 @@ export class UnifiedAIService {
   private async analyzeUserIntent(message: string, context: ChatContext): Promise<any> {
     const systemPrompt = this.buildIntentAnalysisPrompt(context.role);
     
-    const response = await this.geminiProxy.generateContent([
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: `Analyze intent for: "${message}"` }
-    ]);
+    const response = await this.geminiProxy.generateText(
+      `${systemPrompt}\n\nAnalyze intent for: "${message}"`
+    );
 
     try {
-      return JSON.parse(response.content);
+      return JSON.parse(response.text);
     } catch {
       // Fallback to simple classification
       return {
@@ -163,17 +162,14 @@ export class UnifiedAIService {
     
     Always be friendly, helpful, and professional. If you can't answer something, offer to connect them with a human representative.`;
 
-    const response = await this.geminiProxy.generateContent([
-      { role: 'system', content: systemPrompt },
-      ...context.conversationHistory.slice(-5).map(msg => ({
-        role: msg.role,
-        content: msg.content
-      }))
-    ]);
+    const conversationHistory = context.conversationHistory.slice(-5).map(msg => `${msg.role}: ${msg.content}`).join('\n');
+    const response = await this.geminiProxy.generateText(
+      `${systemPrompt}\n\nConversation History:\n${conversationHistory}`
+    );
 
     return {
-      content: response.content,
-      confidence: response.confidence || 0.8,
+      content: response.text,
+      confidence: 0.8,
       suggestions: [
         "Would you like to know our current specials?",
         "Can I help you with anything else?",
@@ -234,20 +230,17 @@ export class UnifiedAIService {
     
     Focus on actionable insights, trends, forecasts, and strategic recommendations.`;
 
-    const response = await this.geminiProxy.generateContent([
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: intent.query || context.conversationHistory.slice(-1)[0]?.content }
-    ]);
+    const combinedPrompt = `${systemPrompt}\n\nUser Query: ${intent.query || context.conversationHistory.slice(-1)[0]?.content || 'Please provide business insights.'}`;
+    const response = await this.geminiProxy.generateText(combinedPrompt);
 
     return {
-      content: response.content,
+      content: response.text,
       confidence: 0.9,
       suggestions: [
         "Show me today's sales analysis",
         "What are the trending patterns?",
         "Generate a forecast report"
-      ],
-      toolCalls: businessAnalysis.recommendedActions
+      ]
     };
   }
 
@@ -338,7 +331,7 @@ export class UnifiedAIService {
     // Store in memory service for pattern learning
     await chickenMemoryService.addObservation(
       `user_interaction_${context.userId}`,
-      interaction
+      JSON.stringify(interaction)
     );
 
     // Update role-specific patterns

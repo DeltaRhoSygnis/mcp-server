@@ -47,7 +47,7 @@ export class FilesystemMCPTools {
         throw new Error(`File size ${stats.size} exceeds maximum ${maxSize} bytes`);
       }
 
-      const content = await fs.readFile(fullPath, args.encoding || 'utf-8');
+      const content = await fs.readFile(fullPath, { encoding: (args.encoding as BufferEncoding) || 'utf-8' });
       
       // Analyze content for business relevance
       const businessMetadata = await this.analyzeFileForBusiness(content, fullPath);
@@ -89,7 +89,7 @@ export class FilesystemMCPTools {
     
     try {
       // Validate content size
-      const contentSize = Buffer.byteLength(args.content, args.encoding || 'utf-8');
+      const contentSize = Buffer.byteLength(args.content, (args.encoding as BufferEncoding) || 'utf-8');
       if (contentSize > this.maxFileSize) {
         throw new Error(`Content size ${contentSize} exceeds maximum ${this.maxFileSize} bytes`);
       }
@@ -107,7 +107,7 @@ export class FilesystemMCPTools {
         }
       }
 
-      await fs.writeFile(fullPath, args.content, args.encoding || 'utf-8');
+      await fs.writeFile(fullPath, args.content, { encoding: (args.encoding as BufferEncoding) || 'utf-8' });
       const stats = await fs.stat(fullPath);
       
       return {
@@ -162,7 +162,7 @@ export class FilesystemMCPTools {
       if (args.businessFilter) {
         filteredEntries = classifiedEntries.filter(entry => 
           entry.businessInfo.category === args.businessFilter ||
-          entry.businessInfo.tags.includes(args.businessFilter)
+          (args.businessFilter && entry.businessInfo.tags.includes(args.businessFilter))
         );
       }
 
@@ -584,7 +584,7 @@ export class FilesystemMCPTools {
         try {
           const content = await fs.readFile(entryPath, 'utf-8');
           const lines = content.split('\n');
-          const matches = [];
+          const matches: Array<{ line: number; content: string; }> = [];
 
           lines.forEach((line, index) => {
             if (line.toLowerCase().includes(pattern.toLowerCase())) {

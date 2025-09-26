@@ -1,10 +1,11 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+// Use require() for Google Generative AI to fix compilation issues
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 import OpenAI from 'openai';
 import { CohereClient } from 'cohere-ai';
 import { HfInference } from '@huggingface/inference';
 
 export class MultiLLMProxy {
-  private gemini: GoogleGenerativeAI;
+  private gemini: any;
   private openrouter: OpenAI | null = null; // OpenRouter uses OpenAI-compatible API
   private cohere: CohereClient | null = null;
   private hf: HfInference | null = null;
@@ -37,8 +38,9 @@ export class MultiLLMProxy {
   async generateText(prompt: string, options: any = {}) {
     // Priority: Gemini > Cohere > HuggingFace > OpenRouter
     try {
-      const model = options.model || 'gemini-1.5-flash';
-      return await this.gemini.getGenerativeModel(model).generateContent(prompt, options);
+      const model = options.model || 'gemini-2.0-flash';
+      const result = await this.gemini.getGenerativeModel(model).generateContent([{ text: prompt }]);
+      return result.response;
     } catch (geminiErr) {
       console.warn('Gemini failed, falling back to Cohere:', geminiErr);
       this.monitoring?.logError('llm_fallback', 'gemini_to_cohere', { prompt, error: geminiErr });
@@ -48,7 +50,7 @@ export class MultiLLMProxy {
           const response = await this.cohere.generate({
             model: 'command-r-plus',
             prompt: prompt,
-            max_tokens: options.maxTokens || 1000,
+            maxTokens: options.maxTokens || 1000,
             temperature: options.temperature || 0.3
           });
           return { text: response.generations[0].text, model: 'cohere' };

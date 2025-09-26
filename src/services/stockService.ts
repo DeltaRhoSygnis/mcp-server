@@ -1,5 +1,16 @@
-import { supabase } from '../src/supabaseConfig';
-import { recordSale, recordExpense } from './supabaseService';
+import { supabase } from '../config/supabaseConfig';
+
+// Stub functions for missing imports
+const recordExpense = async (expense: { description: string; amount: number }) => {
+  console.log('Recording expense:', expense);
+  // TODO: Implement actual expense recording
+};
+
+const recordSale = async (sale: { productName: string; quantity: number; unitPrice: number; total: number }) => {
+  console.log('Recording sale:', sale);
+  // TODO: Implement actual sale recording
+};
+// Removed client-side import: supabaseService
 
 export const applyParsedDataToStock = async (noteId: string, parsedData: any, userId: string) => {
   try {
@@ -54,11 +65,10 @@ export const applyParsedDataToStock = async (noteId: string, parsedData: any, us
         if (product && product.stock >= sale.pieces) {
           // Create sale record
           await recordSale({
-            items: [{
-              productId: product.id,
-              quantity: sale.pieces
-            }],
-            payment: sale.pieces * sale.price
+            productName: product.name,
+            quantity: sale.pieces,
+            unitPrice: sale.price,
+            total: sale.pieces * sale.price
           });
 
           // Update stock

@@ -48,7 +48,7 @@ async function testWithGoogleGenAI() {
         
         // Test a simple generation
         const result = await genAI.models.generateContent({
-            model: 'gemini-1.5-flash',
+            model: 'gemini-2.0-flash',
             contents: [{
                 parts: [{ text: 'Hello! Can you respond with "API test successful via @google/genai"?' }],
                 role: 'user'
@@ -60,7 +60,7 @@ async function testWithGoogleGenAI() {
         
         // Test token counting
         const tokenCount = await genAI.models.countTokens({
-            model: 'gemini-1.5-flash',
+            model: 'gemini-2.0-flash',
             contents: [{
                 parts: [{ text: 'Test message for token counting' }]
             }]

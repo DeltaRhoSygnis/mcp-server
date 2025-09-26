@@ -26,12 +26,12 @@ export class ChatWebSocketService {
   private clients: Map<string, WebSocket> = new Map();
   private sessionClients: Map<string, string[]> = new Map();
 
-  constructor(private wss: WebSocket.Server) {
+  constructor(private wss: import('ws').WebSocketServer) {
     this.setupWebSocketServer();
   }
 
   private setupWebSocketServer(): void {
-    this.wss.on('connection', (ws: WebSocket, request) => {
+    this.wss.on('connection', (ws: WebSocket, request: import('http').IncomingMessage) => {
       const clientId = crypto.randomUUID();
       this.clients.set(clientId, ws);
 

@@ -4,7 +4,7 @@
  * This is the "write-approved" AI that suggests changes but doesn't execute them
  */
 
-import { supabase } from '../src/supabaseConfig';
+import { supabase } from '../config/supabaseConfig';
 import { geminiAPIManager } from './geminiAPIManager';
 import { offlineDB } from './offlineService';
 
@@ -369,8 +369,8 @@ Return JSON:
 `;
 
       const response = await geminiAPIManager.makeRequest(
-        { type: 'text', complexity: 'simple', priority: 'normal', requiresStructuredOutput: true },
-        prompt
+        prompt,
+        { type: 'text', complexity: 'simple', priority: 'normal', requiresStructuredOutput: true }
       );
       
       return JSON.parse(response.text);
@@ -386,7 +386,7 @@ Return JSON:
       const prompt = `
 Analyze stock needs for chicken business:
 
-Current Products: ${JSON.stringify(products.slice(0, 5))}
+Current Inventory: ${JSON.stringify(products)}
 Recent Sales: ${JSON.stringify(sales.slice(0, 10))}
 
 For each product, determine if we need to:
@@ -398,10 +398,9 @@ Return JSON:
 {
   "suggestions": [
     {
-      "product_id": "id",
-      "product_name": "name",
-      "action": "reorder|reduce|maintain", 
-      "current_quantity": number,
+      "product_name": "string",
+      "action": "reorder|reduce|maintain",
+      "current_stock": number,
       "recommended_quantity": number,
       "confidence": 0-100,
       "reasoning": "explanation"
@@ -411,8 +410,8 @@ Return JSON:
 `;
 
       const response = await geminiAPIManager.makeRequest(
-        { type: 'text', complexity: 'medium', priority: 'normal', requiresStructuredOutput: true },
-        prompt
+        prompt,
+        { type: 'text', complexity: 'medium', priority: 'normal', requiresStructuredOutput: true }
       );
       
       return JSON.parse(response.text);
@@ -428,12 +427,13 @@ Return JSON:
       const prompt = `
 Analyze pricing opportunities for chicken business:
 
-Sales Data: ${JSON.stringify(salesData.slice(0, 15))}
+Sales Data: ${JSON.stringify(salesData.slice(0, 20))}
 
-Look for:
-1. Products selling very fast (can increase price)
-2. Products selling slowly (may need price reduction)
-3. Optimal pricing based on demand patterns
+For each product, analyze:
+1. Current pricing vs market
+2. Profit margins
+3. Demand patterns
+4. Competitive positioning
 
 Return JSON:
 {
@@ -451,8 +451,8 @@ Return JSON:
 `;
 
       const response = await geminiAPIManager.makeRequest(
-        { type: 'text', complexity: 'medium', priority: 'normal', requiresStructuredOutput: true },
-        prompt
+        prompt,
+        { type: 'text', complexity: 'medium', priority: 'normal', requiresStructuredOutput: true }
       );
       
       return JSON.parse(response.text);
@@ -488,28 +488,29 @@ Recent Activity: ${patterns.note_count} business notes
 Pattern Data: ${JSON.stringify(patterns).substring(0, 1000)}
 
 Suggest 1-3 process improvements that could:
-1. Save time
-2. Reduce costs  
-3. Improve quality
-4. Increase revenue
+1. Reduce waste
+2. Increase efficiency
+3. Improve customer satisfaction
+4. Boost profitability
 
-Return JSON array:
-[
-  {
-    "title": "improvement title",
-    "description": "what to improve",
-    "type": "efficiency|cost|quality|revenue",
-    "confidence": 0-100,
-    "reasoning": "why this helps",
-    "steps": ["step1", "step2"],
-    "benefit": "expected benefit"
-  }
-]
+Return JSON:
+{
+  "improvements": [
+    {
+      "area": "area of improvement",
+      "current_process": "description",
+      "suggested_change": "improvement",
+      "expected_benefit": "benefit description",
+      "confidence": 0-100,
+      "implementation_effort": "low|medium|high"
+    }
+  ]
+}
 `;
 
       const response = await geminiAPIManager.makeRequest(
-        { type: 'text', complexity: 'medium', priority: 'normal', requiresStructuredOutput: true },
-        prompt
+        prompt,
+        { type: 'text', complexity: 'medium', priority: 'normal', requiresStructuredOutput: true }
       );
       
       return JSON.parse(response.text);

@@ -1,5 +1,5 @@
 // Optimized AI Service with caching and data efficiency
-import { supabase } from '../src/supabaseConfig';
+import { supabase } from '../config/supabaseConfig';
 
 interface BusinessSummary {
   revenue: number;

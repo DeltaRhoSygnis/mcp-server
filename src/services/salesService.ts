@@ -1,4 +1,4 @@
-import { supabase } from '../src/supabaseConfig';
+import { supabase } from '../config/supabaseConfig';
 import type { Sale, Product } from '../types';
 import { safeLog } from '../utils/securityUtils';
 import { fixWorkerNames } from './dataFixService';
@@ -13,12 +13,12 @@ export const getSales = async (limitCount: number = 50): Promise<Sale[]> => {
       .limit(Math.min(limitCount, 100));
 
     if (error) {
-      safeLog.warn('Sales fetch error', error.message);
+      safeLog('Sales fetch error', error.message);
       return [];
     }
 
     // Fix worker names in background if needed
-    const hasUnknownWorkers = data?.some(sale => 
+    const hasUnknownWorkers = data?.some((sale: any) => 
       !sale.worker_name || sale.worker_name === 'Unknown' || sale.worker_name === 'Worker'
     );
     if (hasUnknownWorkers) {
@@ -36,7 +36,7 @@ export const getSales = async (limitCount: number = 50): Promise<Sale[]> => {
       workerName: sale.worker_name || 'Worker'
     }));
   } catch (error) {
-    safeLog.error('Error fetching sales', error);
+    safeLog('Error fetching sales', error);
     throw new Error('Failed to fetch sales');
   }
 };
@@ -61,7 +61,7 @@ export const recordSale = async (saleData: {
       
       // Map parsed items to product IDs (assuming products have id and name)
       items = parsed.items.map((item: { productName: string; quantity: number }) => {
-        const product = saleData.products.find((p: Product) => p.name === item.productName);
+        const product = saleData.products?.find((p: Product) => p.name === item.productName);
         if (!product) throw new Error(`Product ${item.productName} not found`);
         return { productId: product.id, quantity: item.quantity };
       });
@@ -125,7 +125,7 @@ export const recordSale = async (saleData: {
     if (saleError) throw saleError;
     return sale.id;
   } catch (error) {
-    safeLog.error('Error recording sale', error);
+    safeLog('Error recording sale', error);
     throw new Error('Failed to record sale: ' + (error as Error).message);
   }
 };

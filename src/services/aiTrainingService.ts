@@ -65,7 +65,8 @@ export class AITrainingService {
     // Store in persistent memory
     await chickenMemoryService.addObservation(
       `training_data_${userId}`,
-      trainingPoint
+      JSON.stringify(trainingPoint),
+      'ai_learning'
     );
 
     // Analyze for immediate improvements
@@ -149,11 +150,11 @@ export class AITrainingService {
     const optimizations = {
       role,
       commonQueries: commonInputs,
-      problemAreas: lowQualityResponses.map(d => ({
+      problemAreas: await Promise.all(lowQualityResponses.map(async (d) => ({
         input: d.input,
         issue: d.actualOutput,
         suggestion: await this.generateImprovedResponse(d)
-      })),
+      }))),
       recommendedPromptChanges: await this.suggestPromptImprovements(role, roleData),
       trainingDataQuality: this.calculateDataQuality(roleData)
     };
@@ -165,7 +166,12 @@ export class AITrainingService {
    * Learn patterns from website interactions
    */
   async learnWebsitePatterns(interactionLogs: any[]): Promise<any> {
-    const patterns = {
+    const patterns: {
+      commonUserFlows: any[];
+      dropOffPoints: any[];
+      efficientPaths: any[];
+      roleBasedBehaviors: { [key: string]: any };
+    } = {
       commonUserFlows: [],
       dropOffPoints: [],
       efficientPaths: [],
@@ -303,7 +309,7 @@ export class AITrainingService {
 
   private findCommonPatterns(inputs: string[]): string[] {
     // Analyze common input patterns
-    const patterns = [];
+    const patterns: string[] = [];
     // Implementation would use NLP to find common themes
     return patterns;
   }

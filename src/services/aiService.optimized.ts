@@ -3,14 +3,20 @@
  * Provides efficient AI integration with caching, rate limiting, and optimized context
  */
 
-import { GoogleGenAI, GenerateContentResponse, Type } from "@google/genai";
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Sale, ForecastDataPoint, AIInsights, Expense, Product, ParsedSaleFromAI } from '../types';
 import { ErrorHandler } from '../utils/errorHandler';
 import { performanceMonitor } from '../utils/monitoring';
 import pLimit from 'p-limit';
 
 /**
- * Optimized business context for AI
+ * Optimized business conte    } catch (error: any) {
+      performanceMonitor.endTimer('ai_sales_forecast', false, error.message);
+      throw ErrorHandler.handleFirebaseErro    } catch (error: any) {
+      performanceMonitor.endTimer('ai_business_insights', false, error.message);
+      throw ErrorHandler.handleFirebaseError(error, {
+        operation: 'ai_business_insights',ror, {
+        operation: 'ai_sales_forecast',or AI
  */
 interface OptimizedBusinessContext {
   salesSummary: {
@@ -55,7 +61,8 @@ interface RateLimitEntry {
  */
 export class OptimizedAIService {
   private static instance: OptimizedAIService;
-  private ai: GoogleGenAI | null = null;
+  private ai: GoogleGenerativeAI | null = null;
+  private geminiProxy: any; // Proxy for backward compatibility
   private cache = new Map<string, CacheEntry<any>>();
   private rateLimits = new Map<string, RateLimitEntry>();
   
@@ -67,13 +74,27 @@ export class OptimizedAIService {
   private readonly CONCURRENCY_LIMIT = 5;
 
   private constructor() {
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.VITE_API_KEY;
+    const apiKey = process.env.VITE_GEMINI_API_KEY || process.env.VITE_API_KEY || process.env.GEMINI_API_KEY;
     
     if (apiKey && apiKey !== 'undefined') {
-      this.ai = new GoogleGenAI({ apiKey });
+      this.ai = new GoogleGenerativeAI(apiKey);
     } else {
       console.warn("Gemini API key not configured. AI features will be disabled.");
     }
+
+    // Initialize geminiProxy for backward compatibility
+    this.geminiProxy = {
+      generateText: async (prompt: string, options: any = {}) => {
+        if (!this.ai) throw new Error('AI not available');
+        const model = this.ai.getGenerativeModel({ model: 'gemini-1.5-pro' });
+        const result = await model.generateContent([{ role: 'user', parts: [{ text: prompt }] }]);
+        return {
+          text: result.response.text(),
+          success: true,
+          metadata: { processingTime: 0, requestId: 'optimized-' + Date.now() }
+        };
+      }
+    };
   }
 
   /**
@@ -97,7 +118,7 @@ export class OptimizedAIService {
    * Prepare optimized business context
    */
   private prepareBusinessContext(sales: Sale[], expenses: Expense[], products: Product[]): OptimizedBusinessContext {
-    const timerId = performanceMonitor.startTimer('ai_prepare_context');
+    performanceMonitor.startTimer('ai_prepare_context');
 
     try {
       // Optimize sales data (last 30 days only)
@@ -143,7 +164,7 @@ export class OptimizedAIService {
         max: Math.max(...prices)
       };
 
-      performanceMonitor.endTimer(timerId, true);
+      performanceMonitor.endTimer('ai_prepare_context', true);
 
       return {
         salesSummary: {
@@ -170,7 +191,7 @@ export class OptimizedAIService {
         }
       };
     } catch (error: any) {
-      performanceMonitor.endTimer(timerId, false, error.message);
+      performanceMonitor.endTimer('ai_prepare_context', false, error.message);
       throw error;
     }
   }
@@ -240,8 +261,7 @@ export class OptimizedAIService {
     if (entry.count >= this.RATE_LIMIT_MAX_REQUESTS) {
       throw ErrorHandler.handleBusinessLogicError(
         'rate-limit-exceeded',
-        'Too many AI requests. Please wait a moment before trying again.',
-        { operation, resetTime: entry.resetTime }
+        'Too many AI requests. Please wait a moment before trying again.'
       );
     }
 
@@ -327,7 +347,7 @@ export class OptimizedAIService {
       );
     }
 
-    const timerId = performanceMonitor.startTimer('ai_assistant_response');
+    performanceMonitor.startTimer('ai_assistant_response');
 
     try {
       await this.checkRateLimit('assistant');
@@ -350,33 +370,22 @@ export class OptimizedAIService {
         
         Provide helpful, actionable insights based on this data. Keep responses concise and business-focused.`;
 
-        const model = this.ai!.models.generateContent({
-          model: "gemini-1.5-flash",
-          contents: [
-            ...history.slice(-6).map(msg => ({ // Limit history to last 6 messages
-              role: msg.sender === 'user' ? 'user' : 'model',
-              parts: [{ text: msg.text }]
-            })),
-            { role: 'user', parts: [{ text: query }] }
-          ],
-          config: {
-            systemInstruction,
-            temperature: 0.7,
-            maxOutputTokens: 500 // Limit response length
-          }
-        });
+        const model = this.ai!.getGenerativeModel({ model: 'gemini-2.0-flash' });
+        const result = await model.generateContent([
+          { text: `${systemInstruction}\n\nUser query: ${query}` }
+        ]);
 
-        const response = await model;
+        const response = result.response;
         if (!response.text) {
           throw new Error("AI assistant did not provide a response.");
         }
 
-        performanceMonitor.endTimer(timerId, true);
+        performanceMonitor.endTimer('ai_assistant_response', true);
         return response.text();
       });
 
     } catch (error: any) {
-      performanceMonitor.endTimer(timerId, false, error.message);
+      performanceMonitor.endTimer('ai_assistant_response', false, error.message);
       throw ErrorHandler.handleFirebaseError(error, {
         operation: 'ai_assistant_response',
         query: query.substring(0, 100)
@@ -395,7 +404,7 @@ export class OptimizedAIService {
       );
     }
 
-    const timerId = performanceMonitor.startTimer('ai_sales_forecast');
+    performanceMonitor.startTimer('ai_sales_forecast');
 
     try {
       await this.checkRateLimit('forecast');
@@ -412,38 +421,21 @@ export class OptimizedAIService {
         
         Consider patterns, seasonality, and recent trends.`;
 
-        const response = await this.ai!.models.generateContent({
-          model: "gemini-1.5-flash",
-          contents: prompt,
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  day: { type: Type.STRING },
-                  predictedSales: { type: Type.NUMBER }
-                },
-                required: ["day", "predictedSales"]
-              }
-            },
-            temperature: 0.3
-          }
-        });
+        const model = this.ai!.getGenerativeModel({ model: 'gemini-2.0-flash' });
+        const response = await model.generateContent([{ text: prompt + '\n\nReturn JSON array with day and predictedSales fields.' }]);
 
         if (!response.text) {
           throw new Error("AI forecast response was empty.");
         }
 
         const forecastData = JSON.parse(response.text());
-        performanceMonitor.endTimer(timerId, true);
+        performanceMonitor.endTimer('ai_sales_forecast', true);
         return forecastData;
 
       }, 15 * 60 * 1000); // Cache for 15 minutes
 
     } catch (error: any) {
-      performanceMonitor.endTimer(timerId, false, error.message);
+      performanceMonitor.endTimer('ai_sales_forecast', false, error.message);
       throw ErrorHandler.handleFirebaseError(error, {
         operation: 'ai_sales_forecast'
       });
@@ -461,7 +453,7 @@ export class OptimizedAIService {
       );
     }
 
-    const timerId = performanceMonitor.startTimer('ai_voice_parsing');
+    performanceMonitor.startTimer('ai_voice_parsing');
 
     try {
       await this.checkRateLimit('voice_parsing');
@@ -481,47 +473,22 @@ export class OptimizedAIService {
       
       Extract items and payment amount. Match product names closely.`;
 
-      const response = await this.ai!.models.generateContent({
-        model: "gemini-1.5-flash",
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              items: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    productName: { type: Type.STRING },
-                    quantity: { type: Type.INTEGER }
-                  },
-                  required: ["productName", "quantity"]
-                }
-              },
-              payment: { type: Type.NUMBER }
-            },
-            required: ["items", "payment"]
-          },
-          temperature: 0.1
-        }
-      });
+      const model = this.ai!.getGenerativeModel({ model: 'gemini-2.0-flash' });
+      const response = await model.generateContent([{ text: prompt + '\n\nReturn JSON with items array (productName, quantity) and payment number.' }]);
 
       if (!response.text) {
         throw new Error("Voice parsing response was empty.");
       }
 
       const parsedData = JSON.parse(response.text()) as ParsedSaleFromAI;
-      performanceMonitor.endTimer(timerId, true);
+      performanceMonitor.endTimer('ai_voice_parsing', true);
       return parsedData;
 
     } catch (error: any) {
-      performanceMonitor.endTimer(timerId, false, error.message);
+      performanceMonitor.endTimer('ai_voice_parsing', false, error.message);
       throw ErrorHandler.handleBusinessLogicError(
         'voice-parsing-failed',
-        'Could not understand the voice input. Please try speaking more clearly.',
-        { transcript: transcript.substring(0, 100) }
+        'Could not understand the voice input. Please try speaking more clearly.'
       );
     }
   }
@@ -537,7 +504,7 @@ export class OptimizedAIService {
       );
     }
 
-    const timerId = performanceMonitor.startTimer('ai_business_insights');
+    performanceMonitor.startTimer('ai_business_insights');
 
     try {
       await this.checkRateLimit('insights');
@@ -559,36 +526,21 @@ export class OptimizedAIService {
         
         Provide 2-3 insights, risks, and opportunities each.`;
 
-        const response = await this.ai!.models.generateContent({
-          model: "gemini-1.5-flash",
-          contents: prompt,
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                insights: { type: Type.ARRAY, items: { type: Type.STRING } },
-                risks: { type: Type.ARRAY, items: { type: Type.STRING } },
-                opportunities: { type: Type.ARRAY, items: { type: Type.STRING } }
-              },
-              required: ["insights", "risks", "opportunities"]
-            },
-            temperature: 0.7
-          }
-        });
+        const model = this.ai!.getGenerativeModel({ model: 'gemini-2.0-flash' });
+        const response = await model.generateContent([{ text: prompt + '\n\nReturn JSON with insights, risks, and opportunities arrays.' }]);
 
         if (!response.text) {
           throw new Error("Business insights response was empty.");
         }
 
         const insights = JSON.parse(response.text());
-        performanceMonitor.endTimer(timerId, true);
+        performanceMonitor.endTimer('ai_business_insights', true);
         return insights;
 
       }, 30 * 60 * 1000); // Cache for 30 minutes
 
     } catch (error: any) {
-      performanceMonitor.endTimer(timerId, false, error.message);
+      performanceMonitor.endTimer('ai_business_insights', false, error.message);
       throw ErrorHandler.handleFirebaseError(error, {
         operation: 'ai_business_insights'
       });

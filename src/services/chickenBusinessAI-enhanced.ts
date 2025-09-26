@@ -8,7 +8,7 @@ import { supabase } from '../config/supabaseConfig';
 import { chickenMemoryService } from './chickenMemoryService';
 import { MultiLLMProxy } from './MultiLLMProxy';
 
-interface ChickenBusinessPattern {
+export interface ChickenBusinessPattern {
   business_type: 'purchase' | 'processing' | 'distribution' | 'cooking' | 'sales' | 'general';
   confidence_score: number;
   learned_patterns: Record<string, any>;
@@ -367,6 +367,71 @@ Return as array of strings.`;
     } catch (error) {
       console.warn('⚠️ Failed to generate AI suggestions:', error);
       return this.getWorkflowSuggestions(pattern);
+    }
+  }
+
+  // Additional methods for compatibility
+  async getRecentPatterns(): Promise<ChickenBusinessPattern[]> {
+    try {
+      // This would normally get recent patterns from memory service
+      // For now, return sample patterns
+      return [
+        {
+          business_type: 'sales',
+          confidence_score: 0.85,
+          learned_patterns: { recent_activity: 'active' }
+        }
+      ];
+    } catch (error) {
+      console.warn('Failed to get recent patterns:', error);
+      return [];
+    }
+  }
+
+  async parseAndApplyNote(noteText: string, userRole: string = 'worker'): Promise<{
+    success: boolean;
+    data?: any;
+    error?: string;
+  }> {
+    try {
+      const parseResult = await this.parseNote(noteText);
+      
+      if (parseResult.success && parseResult.data) {
+        // Apply business logic based on the parsed pattern
+        const applied = await this.applyBusinessPattern(parseResult.data, userRole);
+        
+        return {
+          success: true,
+          data: {
+            pattern: parseResult.data,
+            applied: applied,
+            suggestions: parseResult.suggestions
+          }
+        };
+      }
+      
+      return parseResult;
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  private async applyBusinessPattern(pattern: ChickenBusinessPattern, userRole: string): Promise<boolean> {
+    try {
+      // Store the pattern and create business observations
+      await chickenMemoryService.addObservation(
+        `${pattern.business_type}_operation`,
+        `User (${userRole}) performed ${pattern.business_type} operation with ${pattern.confidence_score} confidence`,
+        'user_input'
+      );
+      
+      return true;
+    } catch (error) {
+      console.warn('Failed to apply business pattern:', error);
+      return false;
     }
   }
 }

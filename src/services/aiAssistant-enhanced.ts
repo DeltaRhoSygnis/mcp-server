@@ -4,10 +4,9 @@
  * Now uses MCP server for reliable Gemini API calls with fallback
  */
 
-import { supabase } from '../src/supabaseConfig';
-import { geminiAPIManager } from './geminiAPIManager';
-import { offlineDB } from './offlineService';
-import { mcpIntegration } from './mcpIntegration';
+import { supabase } from '../config/supabaseConfig';
+import { MultiLLMProxy } from './MultiLLMProxy';
+import { mcpClient } from './mcpClient';
 
 interface AIProposal {
   id: string;
@@ -45,7 +44,7 @@ class EnhancedAIAssistantService {
     
     try {
       // Check MCP server health first
-      const mcpHealth = await mcpIntegration.healthCheck();
+      const mcpHealth = await mcpClient.healthCheck();
       console.log(`🔗 MCP server status: ${mcpHealth.healthy ? 'healthy' : 'unhealthy'} (${mcpHealth.latency}ms)`);
       
       // Use MCP for comprehensive analysis if available
@@ -85,7 +84,7 @@ class EnhancedAIAssistantService {
       // Gather business context for MCP
       const businessContext = await this.gatherBusinessContext();
       
-      const { proposals, usedMCP } = await mcpIntegration.getAIProposals({
+      const { proposals, usedMCP } = await mcpClient.getAIProposals({
         context: businessContext,
         analysis_type: 'comprehensive',
         include_confidence: true,
@@ -174,8 +173,8 @@ class EnhancedAIAssistantService {
         let usedMCP = false;
         
         // Try MCP first
-        if (mcpIntegration.isAvailable()) {
-          const mcpResult = await mcpIntegration.callTool('analyze_expense', {
+        if (mcpClient.isAvailable()) {
+          const mcpResult = await mcpClient.callTool('analyze_expense', {
             expense_data: expense,
             operation: 'categorize'
           });
@@ -243,15 +242,15 @@ class EnhancedAIAssistantService {
       let usedMCP = false;
       
       // Try MCP first for comprehensive analysis
-      if (mcpIntegration.isAvailable()) {
-        const mcpResult = await mcpIntegration.applyStockPattern('reorder_analysis', {
+      if (mcpClient.isAvailable()) {
+        const mcpResult = await mcpClient.applyStockPattern('reorder_analysis', {
           products,
           sales_data: recentSales || [],
           timeframe: '30d'
         });
         
         if (mcpResult.success) {
-          stockAnalysis = mcpResult.result;
+          stockAnalysis = mcpResult.data;
           usedMCP = true;
         }
       }

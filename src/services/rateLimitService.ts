@@ -98,7 +98,8 @@ export const rateLimitMiddleware = (req: Request, res: Response, next: NextFunct
     const item = rateLimitMap.get(key)!;
     if (now - item.resetTime < windowMs) {
       if (item.count >= max) {
-        return res.status(429).json({ error: { code: 429, message: 'Rate limit exceeded', details: { remaining: 0 } } });
+        res.status(429).json({ error: { code: 429, message: 'Rate limit exceeded', details: { remaining: 0 } } });
+        return;
       }
       item.count++;
     } else {

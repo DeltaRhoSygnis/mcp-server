@@ -1,14 +1,14 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
 
 // Debug logging in development
-if (import.meta.env.DEV) {
+if (process.env.NODE_ENV === 'development') {
   console.log('🔧 Supabase Config Debug:');
   console.log('URL:', supabaseUrl ? '✅ SET' : '❌ MISSING');
   console.log('Key:', supabaseAnonKey ? '✅ SET' : '❌ MISSING');
-  console.log('Mode:', import.meta.env.MODE);
+  console.log('Mode:', process.env.NODE_ENV);
 }
 
 // Create Supabase client or dummy client if not configured

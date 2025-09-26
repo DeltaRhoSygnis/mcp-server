@@ -4,11 +4,11 @@
  * Phase 2 of AI implementation - automatic stock updates from parsed patterns
  */
 
-import { supabase } from '../src/supabaseConfig';
+import { supabase } from '../config/supabaseConfig';
 import { offlineDB } from './offlineService';
 import { connectionService } from './connectionService';
 import { unifiedDataService } from './unifiedDataService';
-import type { ChickenBusinessPattern } from './chickenBusinessAI';
+import type { ChickenBusinessPattern } from './chickenBusinessAI-enhanced';
 
 interface StockIntegrationResult {
   success: boolean;
@@ -76,7 +76,7 @@ export class SmartStockIntegration {
       return {
         success: false,
         updates: {},
-        errors: [error.message]
+        errors: [error instanceof Error ? error.message : String(error)]
       };
     }
   }

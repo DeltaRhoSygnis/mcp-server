@@ -92,9 +92,11 @@ certificates/
 # Development tools
 .git/
 .gitignore
-README.md
-*.md
 docs/
+
+# Exclude most markdown files but allow README.md for deployment
+*.md
+!README.md
 
 # Docker files (don't copy Docker files into the image)
 Dockerfile*
@@ -121,8 +123,7 @@ fixtures/
 azure-pipelines.yml
 Jenkinsfile
 
-# Package manager files
-package-lock.json
+# Package manager files (keep package-lock.json for Docker builds)
 yarn.lock
 pnpm-lock.yaml
 

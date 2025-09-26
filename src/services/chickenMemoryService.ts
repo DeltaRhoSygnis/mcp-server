@@ -446,9 +446,33 @@ export class ChickenBusinessMemoryService {
   }
 
   async disconnect(): Promise<void> {
-    if (this.isInitialized) {
-      this.isInitialized = false;
-    }
+    // Graceful shutdown - no special cleanup needed for localStorage
+    this.isInitialized = false;
+  }
+
+  // Alias methods for compatibility with other parts of the system
+  async addObservation(entityName: string, observation: string, source: 'ai_learning' | 'user_input' | 'system_analysis' = 'system_analysis'): Promise<boolean> {
+    return this.addBusinessObservation({
+      entityName,
+      observation,
+      timestamp: new Date().toISOString(),
+      source,
+      id: `obs_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    });
+  }
+
+  async storeEntity(entityType: string, data: any): Promise<boolean> {
+    return this.storeBusinessEntity({
+      name: `${entityType}_${Date.now()}`,
+      entityType: entityType as any,
+      attributes: data,
+      created: new Date().toISOString()
+    });
+  }
+
+  async searchSimilar(query: string, limit: number = 5): Promise<any[]> {
+    const results = await this.searchBusinessContext(query);
+    return results.slice(0, limit).map(result => result.data);
   }
 }
 

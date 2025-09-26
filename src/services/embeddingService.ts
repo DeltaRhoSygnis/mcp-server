@@ -15,8 +15,7 @@ class EmbeddingService {
 
   async generateEmbeddings(texts: string[], options?: { batchSize?: number }): Promise<{ embeddings: number[][] }> {
     const result = await this.geminiProxy.generateEmbeddings(texts, {
-      batchSize: options?.batchSize || 10,
-      model: 'text-embedding-004'
+      batchSize: options?.batchSize || 10
     });
 
     // Store in DB

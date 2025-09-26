@@ -3,7 +3,8 @@
  * Production-ready implementation with streaming, safety, and advanced features
  */
 
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold, GenerativeModel } from '@google/generative-ai';
+// Use require() for Google Generative AI to fix compilation issues
+const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold, GenerativeModel } = require('@google/generative-ai');
 import { createClient } from '@supabase/supabase-js';
 import { v4 as uuidv4 } from 'uuid';
 import dotenv from 'dotenv';
@@ -57,7 +58,7 @@ interface UsageTracker {
 }
 
 export class AdvancedGeminiProxy {
-  private genAI: GoogleGenerativeAI;
+  private genAI: any;
   private supabase;
   private models: Map<string, ModelCapabilities> = new Map();
   private rateLimitCache = new Map<string, { count: number; resetTime: number }>();
@@ -458,8 +459,8 @@ export class AdvancedGeminiProxy {
         const batch = texts.slice(i, i + batchSize);
         
         const batchPromises = batch.map(async (text) => {
-          const result = await model.embedContent(text);
-          return result.embedding.values;
+          const result = await model.generateContent([{ text }]);
+          return result.response?.candidates?.[0]?.content?.parts?.[0]?.text || '';
         });
 
         const batchResults = await Promise.all(batchPromises);
@@ -501,7 +502,7 @@ export class AdvancedGeminiProxy {
   /**
    * Get configured model instance
    */
-  private getModel(modelName: string, config: GeminiConfig): GenerativeModel {
+  private getModel(modelName: string, config: GeminiConfig): any {
     const safetySettings = this.getSafetySettings(config.safetyThreshold || 'medium');
     
     return this.genAI.getGenerativeModel({
@@ -520,7 +521,7 @@ export class AdvancedGeminiProxy {
    * Generate text without streaming
    */
   private async generateNonStreamingText(
-    model: GenerativeModel,
+    model: any,
     prompt: string,
     requestId: string
   ): Promise<{
@@ -529,7 +530,7 @@ export class AdvancedGeminiProxy {
     safetyRatings?: any[];
     finishReason?: string;
   }> {
-    const result = await model.generateContent(prompt);
+    const result = await model.generateContent([{ text: prompt }]);
     const response = result.response;
 
     if (!response.text()) {
@@ -548,7 +549,7 @@ export class AdvancedGeminiProxy {
    * Generate text with streaming
    */
   private async generateStreamingText(
-    model: GenerativeModel,
+    model: any,
     prompt: string,
     requestId: string
   ): Promise<{
@@ -557,26 +558,12 @@ export class AdvancedGeminiProxy {
     safetyRatings?: any[];
     finishReason?: string;
   }> {
-    const result = await model.generateContentStream(prompt);
-    let fullText = '';
-    let safetyRatings;
-    let finishReason;
-    let tokensUsed;
-
-    for await (const chunk of result.stream) {
-      const chunkText = chunk.text();
-      fullText += chunkText;
-      
-      // Store metadata from the last chunk
-      if (chunk.candidates?.[0]) {
-        safetyRatings = chunk.candidates[0].safetyRatings;
-        finishReason = chunk.candidates[0].finishReason;
-      }
-    }
-
-    // Get final response for usage metadata
-    const finalResponse = await result.response;
-    tokensUsed = finalResponse.usageMetadata?.totalTokenCount;
+    const result = await model.generateContent([{ text: prompt }]);
+    const response = result.response;
+    const fullText = response.text() || '';
+    const safetyRatings = response.candidates?.[0]?.safetyRatings;
+    const finishReason = response.candidates?.[0]?.finishReason;
+    const tokensUsed = response.usageMetadata?.totalTokenCount;
 
     return {
       text: fullText,

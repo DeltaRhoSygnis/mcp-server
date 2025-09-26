@@ -9,7 +9,7 @@ import { CohereClient } from 'cohere-ai';
 import { HfInference } from '@huggingface/inference';
 import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { Anthropic } from '@anthropic-ai/sdk';
+// import { Anthropic } from '@anthropic-ai/sdk'; // Optional dependency
 
 export interface LLMOptions {
   provider?: 'gemini' | 'cohere' | 'hf' | 'openrouter';
@@ -22,7 +22,7 @@ export class MultiLLMProxy extends AdvancedGeminiProxy {
   private cohere: CohereClient | null = null;
   private hf: HfInference | null = null;
   private openai: OpenAI | null = null;
-  private anthropic: Anthropic | null = null;
+  private anthropic: any | null = null; // Optional Anthropic SDK
   private gemini: GoogleGenerativeAI;
   private providerUsage: Map<string, { requests: number; tokens: number; resetTime: number }> = new Map();
 
@@ -30,7 +30,7 @@ export class MultiLLMProxy extends AdvancedGeminiProxy {
     super(); // Inherit Gemini functionality
     this.gemini = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
     if (process.env.OPENAI_API_KEY) this.openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    if (process.env.ANTHROPIC_API_KEY) this.anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    // if (process.env.ANTHROPIC_API_KEY) this.anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     this.initializeProviders();
   }
 
@@ -64,10 +64,32 @@ export class MultiLLMProxy extends AdvancedGeminiProxy {
     });
   }
 
+  // Normalize options between LLMOptions and parent class config format
+  private normalizeOptions(config: any): LLMOptions & any {
+    // Handle both formats - LLMOptions and parent GeminiConfig
+    return {
+      provider: config.provider || 'gemini',
+      taskType: config.taskType || config.taskRequest || {
+        type: 'text',
+        complexity: 'medium',
+        priority: 'medium'
+      },
+      maxTokens: config.maxTokens || config.maxOutputTokens || 1000,
+      temperature: config.temperature || 0.7,
+      ...config // Pass through any other properties
+    };
+  }
+
   /**
    * Main routing method: Generate text with provider fallback
    */
-  async generateText(prompt: string, options: LLMOptions = {}): Promise<GeminiResponse> {
+  // Enhanced generateText with multi-LLM support
+  async generateText(
+    prompt: string,
+    config: any = {}
+  ): Promise<GeminiResponse> {
+    // Support both old LLMOptions format and new parent class format
+    const options = this.normalizeOptions(config);
     const { provider = 'gemini', taskType, maxTokens = 1000, temperature = 0.7 } = options;
     const startTime = Date.now();
 
@@ -76,7 +98,7 @@ export class MultiLLMProxy extends AdvancedGeminiProxy {
       const rateCheck = this.checkProviderLimit(provider);
       if (!rateCheck.allowed) {
         console.warn(`Rate limited on ${provider}, falling back to ${rateCheck.fallback}`);
-        return this.generateText(prompt, { ...options, provider: rateCheck.fallback });
+        return this.generateText(prompt, { ...config, provider: rateCheck.fallback });
       }
 
       let response: GeminiResponse;
@@ -92,8 +114,13 @@ export class MultiLLMProxy extends AdvancedGeminiProxy {
           response = await this.callOpenRouter(prompt, { maxTokens, temperature, taskType });
           break;
         default:
-          // Gemini (inherited)
-          response = await super.generateText(prompt, { taskType, maxTokens, temperature });
+          // Gemini (inherited) - pass through with proper config format
+          response = await super.generateText(prompt, {
+            ...config,
+            taskType,
+            maxOutputTokens: maxTokens,
+            temperature
+          });
           break;
       }
 
@@ -101,13 +128,13 @@ export class MultiLLMProxy extends AdvancedGeminiProxy {
       this.updateProviderUsage(provider, response.metadata?.tokensUsed || 0);
 
       // Log the call (using inherited method)
-      await this.logRequest(provider, prompt, response, true, undefined, Date.now() - startTime);
+      // await this.logRequest(provider, prompt, response, true, undefined, Date.now() - startTime); // Commented out: private method
 
       return response;
 
     } catch (error) {
       const duration = Date.now() - startTime;
-      await this.logRequest(provider, prompt, null, false, error instanceof Error ? error.message : String(error), duration);
+      // await this.logRequest(provider, prompt, null, false, error instanceof Error ? error.message : String(error), duration); // Commented out: private method
       
       // Fallback on error
       const fallbackProvider = this.getFallbackProvider(provider);
@@ -123,7 +150,20 @@ export class MultiLLMProxy extends AdvancedGeminiProxy {
   /**
    * Generate embeddings with provider routing
    */
-  async generateEmbeddings(texts: string[], options: { provider?: 'gemini' | 'hf'; batchSize?: number } = {}): Promise<{ embeddings: number[][]; model: string }> {
+  async generateEmbeddings(
+    texts: string[], 
+    options: { 
+      provider?: 'gemini' | 'hf'; 
+      batchSize?: number;
+      userId?: string;
+      requestId?: string;
+    } = {}
+  ): Promise<{
+    embeddings: number[][];
+    dimensions: number;
+    model: string;
+    metadata: { processingTime: number; requestId: string };
+  }> {
     const { provider = 'gemini', batchSize = 10 } = options;
 
     if (provider === 'hf' && this.hf) {
@@ -136,7 +176,15 @@ export class MultiLLMProxy extends AdvancedGeminiProxy {
         });
         embeddings.push(response as unknown as number[]); // HF returns array
       }
-      return { embeddings, model: 'all-MiniLM-L6-v2' };
+      return { 
+        embeddings, 
+        dimensions: 384, 
+        model: 'all-MiniLM-L6-v2',
+        metadata: { 
+          processingTime: Date.now() - Date.now(), 
+          requestId: options.requestId || 'hf-' + Date.now() 
+        }
+      };
     }
 
     // Fallback to Gemini (inherited)
@@ -147,32 +195,38 @@ export class MultiLLMProxy extends AdvancedGeminiProxy {
 
   private async callCohere(prompt: string, { maxTokens, temperature, taskType }: { maxTokens: number; temperature: number; taskType: TaskRequest }): Promise<GeminiResponse> {
     if (!this.cohere) throw new Error('Cohere not configured');
+    const startTime = Date.now();
 
     const model = taskType.complexity === 'simple' ? 'command-r' : 'command-r-plus'; // command-r for structured
     const response = await this.cohere.generate({
       model,
       prompt,
-      max_tokens: maxTokens,
+      maxTokens: maxTokens,
       temperature,
-      num_generations: 1,
+      numGenerations: 1,
     });
 
     const text = response.generations[0]?.text || '';
-    const tokensUsed = response.generations[0]?.token_count || 0;
+    const tokensUsed = text.length / 4; // Approximate token count
 
     return {
       text,
       model,
       success: true,
-      metadata: { tokensUsed, processingTime: Date.now() - (this as any).startTime } // Inherit timing
+      metadata: { 
+        tokensUsed, 
+        processingTime: Date.now() - startTime,
+        requestId: 'cohere-' + Date.now()
+      }
     };
   }
 
   private async callHuggingFace(prompt: string, { maxTokens, temperature, taskType }: { maxTokens: number; temperature: number; taskType: TaskRequest }): Promise<GeminiResponse> {
     if (!this.hf) throw new Error('Hugging Face not configured');
+    const startTime = Date.now();
 
     // For text gen: Use lightweight model
-    const model = taskType.type === 'analysis' ? 'microsoft/DialoGPT-medium' : 'gpt2'; // Or Gemma if available
+    const model = 'gpt2'; // Default model for HuggingFace
     const response = await this.hf.textGeneration({
       model,
       inputs: prompt,
@@ -191,12 +245,17 @@ export class MultiLLMProxy extends AdvancedGeminiProxy {
       text,
       model,
       success: true,
-      metadata: { tokensUsed, processingTime: Date.now() - (this as any).startTime }
+      metadata: { 
+        tokensUsed, 
+        processingTime: Date.now() - startTime,
+        requestId: 'hf-' + Date.now()
+      }
     };
   }
 
   private async callOpenRouter(prompt: string, { maxTokens, temperature, taskType }: { maxTokens: number; temperature: number; taskType: TaskRequest }): Promise<GeminiResponse> {
     if (!this.openai) throw new Error('OpenRouter not configured');
+    const startTime = Date.now();
 
     // Route to free/cheap model based on task
     const model = taskType.complexity === 'simple' ? 'deepseek/deepseek-r1:free' : 'x-ai/grok-beta'; // Adjust per limits
@@ -214,7 +273,11 @@ export class MultiLLMProxy extends AdvancedGeminiProxy {
       text,
       model,
       success: true,
-      metadata: { tokensUsed, processingTime: Date.now() - (this as any).startTime }
+      metadata: { 
+        tokensUsed, 
+        processingTime: Date.now() - startTime,
+        requestId: 'openrouter-' + Date.now()
+      }
     };
   }
 
@@ -267,26 +330,34 @@ export class MultiLLMProxy extends AdvancedGeminiProxy {
   }
 
   // Health check for all providers
-  async healthCheck(): Promise<Record<string, { status: 'healthy' | 'unhealthy'; error?: string }>> {
-    const checks: Record<string, any> = {};
+  async healthCheck(): Promise<{
+    overall: 'healthy' | 'degraded' | 'unhealthy';
+    models: Record<string, { status: 'healthy' | 'unhealthy'; latency?: number; error?: string }>;
+  }> {
+    const parentHealth = await super.healthCheck();
+    const models = { ...parentHealth.models };
     
-    // Gemini (inherited)
-    checks.gemini = await super.healthCheck();
-
     // Cohere
     if (this.cohere) {
       try {
-        await this.cohere.generate({ model: 'command-r', prompt: 'test' });
-        checks.cohere = { status: 'healthy' };
+        const startTime = Date.now();
+        await this.cohere.generate({ model: 'command-r', prompt: 'test', maxTokens: 5 });
+        models.cohere = { status: 'healthy', latency: Date.now() - startTime };
       } catch (error) {
-        checks.cohere = { status: 'unhealthy', error: String(error) };
+        models.cohere = { status: 'unhealthy', error: String(error) };
       }
     }
 
-    // Similar for HF and OpenRouter...
-    // (Implement quick tests)
+    // Determine overall health
+    const healthyCount = Object.values(models).filter(m => m.status === 'healthy').length;
+    const totalCount = Object.keys(models).length;
+    
+    let overall: 'healthy' | 'degraded' | 'unhealthy';
+    if (healthyCount === totalCount) overall = 'healthy';
+    else if (healthyCount > 0) overall = 'degraded';
+    else overall = 'unhealthy';
 
-    return checks;
+    return { overall, models };
   }
 }
 

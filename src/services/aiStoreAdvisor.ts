@@ -23,7 +23,7 @@ interface BusinessMemory {
   created_at: string;
 }
 
-interface ContextualAdvice {
+export interface ContextualAdvice {
   type: 'guidance' | 'warning' | 'opportunity' | 'optimization';
   priority: 'low' | 'medium' | 'high' | 'urgent';
   title: string;
@@ -342,7 +342,7 @@ Return JSON array:
         taskType: {
           complexity: 'medium',
           type: 'analysis',
-          priority: 'normal'
+          priority: 'medium'
         }
       });
       
@@ -772,10 +772,45 @@ Return JSON array:
     // Implementation for common worker issue detection
     return [];
   }
+
+  async getWorkerAdvice(query: string): Promise<{ advice: string; confidence: number }> {
+    try {
+      const prompt = `You are a helpful assistant for chicken restaurant workers. 
+      
+      Worker question/request: "${query}"
+      
+      Provide practical, actionable advice that helps them with their work. Focus on:
+      - Food safety and handling
+      - Customer service
+      - Efficient workflow
+      - Problem solving
+      
+      Keep your response friendly and specific to chicken restaurant operations.`;
+
+      const response = await this.geminiProxy.generateText(prompt, {
+        model: 'gemini-2.0-flash',
+        temperature: 0.7,
+        maxOutputTokens: 1000
+      });
+
+      return {
+        advice: response.text || "I'm here to help! Can you provide more details about what you need assistance with?",
+        confidence: 0.8
+      };
+    } catch (error) {
+      return {
+        advice: "I'm here to help! Can you provide more details about what you need assistance with?",
+        confidence: 0.3
+      };
+    }
+  }
 }
 
-// Export singleton instance
+// Export class for instantiation by MCP tools
+export { AIStoreAdvisorService };
+
+// Export singleton instance for direct usage
 export const aiStoreAdvisor = new AIStoreAdvisorService(new AdvancedGeminiProxy());
 
 // Export types
-export type { BusinessMemory, ContextualAdvice, BusinessState };
+export type { BusinessMemory, BusinessState };

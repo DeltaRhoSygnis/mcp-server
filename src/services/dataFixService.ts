@@ -1,4 +1,4 @@
-import { supabase } from '../src/supabaseConfig';
+import { supabase } from '../config/supabaseConfig';
 import { safeLog } from '../utils/securityUtils';
 
 /**
@@ -12,12 +12,12 @@ export const fixWorkerNames = async (): Promise<void> => {
       .select('id, display_name, email');
 
     if (profileError) {
-      safeLog.warn('Could not fetch user profiles', profileError.message);
+      safeLog('Could not fetch user profiles', profileError.message);
       return;
     }
 
     if (!profiles || profiles.length === 0) {
-      safeLog.info('No user profiles found');
+      safeLog('No user profiles found');
       return;
     }
 
@@ -29,7 +29,7 @@ export const fixWorkerNames = async (): Promise<void> => {
 
     if (!salesError && sales) {
       for (const sale of sales) {
-        const profile = profiles.find(p => p.id === sale.worker_id);
+        const profile = profiles.find((p: any) => p.id === sale.worker_id);
         if (profile) {
           const workerName = profile.display_name || profile.email?.split('@')[0] || 'Worker';
           await supabase
@@ -38,7 +38,7 @@ export const fixWorkerNames = async (): Promise<void> => {
             .eq('id', sale.id);
         }
       }
-      safeLog.info(`Fixed ${sales.length} sales records`);
+      safeLog(`Fixed ${sales.length} sales records`);
     }
 
     // Fix expense records
@@ -49,7 +49,7 @@ export const fixWorkerNames = async (): Promise<void> => {
 
     if (!expenseError && expenses) {
       for (const expense of expenses) {
-        const profile = profiles.find(p => p.id === expense.worker_id);
+        const profile = profiles.find((p: any) => p.id === expense.worker_id);
         if (profile) {
           const workerName = profile.display_name || profile.email?.split('@')[0] || 'Worker';
           await supabase
@@ -58,11 +58,11 @@ export const fixWorkerNames = async (): Promise<void> => {
             .eq('id', expense.id);
         }
       }
-      safeLog.info(`Fixed ${expenses.length} expense records`);
+      safeLog(`Fixed ${expenses.length} expense records`);
     }
 
   } catch (error) {
-    safeLog.error('Error fixing worker names', error);
+    safeLog('Error fixing worker names', error);
   }
 };
 
@@ -93,12 +93,12 @@ export const ensureUserProfile = async (): Promise<void> => {
         });
 
       if (insertError) {
-        safeLog.warn('Could not create user profile', insertError.message);
+        safeLog('Could not create user profile', insertError.message);
       } else {
-        safeLog.info('Created user profile');
+        safeLog('Created user profile');
       }
     }
   } catch (error) {
-    safeLog.error('Error ensuring user profile', error);
+    safeLog('Error ensuring user profile', error);
   }
 };

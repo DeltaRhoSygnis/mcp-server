@@ -66,7 +66,7 @@ class UnifiedAIService {
         if (mcpResponse.success) {
           return {
             success: true,
-            data: mcpResponse.result,
+            data: mcpResponse.data,
             source: 'mcp'
           };
         }
@@ -110,7 +110,7 @@ class UnifiedAIService {
         if (mcpResponse.success) {
           return {
             success: true,
-            data: mcpResponse.result,
+            data: mcpResponse.data,
             source: 'mcp'
           };
         }
@@ -130,12 +130,12 @@ Business Context: ${businessContext || 'General chicken business operations'}
 Provide practical, actionable advice in a structured format.`;
 
       const directResult = await this.geminiManager.callGemini(
+        prompt,
         { 
           type: 'text',
           complexity: 'medium',
           priority: 'normal'
-        },
-        prompt
+        }
       );
 
       return {
@@ -165,7 +165,7 @@ Provide practical, actionable advice in a structured format.`;
         if (mcpResponse.success) {
           return {
             success: true,
-            data: mcpResponse.result,
+            data: mcpResponse.data,
             source: 'mcp'
           };
         }
@@ -208,7 +208,7 @@ Provide practical, actionable advice in a structured format.`;
         if (mcpResponse.success) {
           return {
             success: true,
-            data: mcpResponse.result,
+            data: mcpResponse.data,
             source: 'mcp'
           };
         }
@@ -251,7 +251,7 @@ Provide practical, actionable advice in a structured format.`;
         if (mcpResponse.success) {
           return {
             success: true,
-            data: mcpResponse.result,
+            data: mcpResponse.data,
             source: 'mcp'
           };
         }
@@ -324,7 +324,7 @@ Provide practical, actionable advice in a structured format.`;
     return {
       mcp: {
         available: this.mcpAvailable,
-        url: mcpClient['baseUrl']
+        url: 'mcp://localhost' // Default MCP URL
       },
       direct: {
         available: true // Direct API is always available if configured

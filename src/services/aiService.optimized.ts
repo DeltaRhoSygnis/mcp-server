@@ -69,7 +69,7 @@ export class OptimizedAIService {
   // Configuration
   private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
   private readonly RATE_LIMIT_WINDOW = 60 * 1000; // 1 minute
-  private readonly RATE_LIMIT_MAX_REQUESTS = 30; // 30 requests per minute
+  private readonly RATE_LIMIT_MAX_REQUESTS = 200; // 200 requests per minute for 10-20% TPM usage
   private readonly MAX_CACHE_SIZE = 100;
   private readonly CONCURRENCY_LIMIT = 5;
 
@@ -86,7 +86,7 @@ export class OptimizedAIService {
     this.geminiProxy = {
       generateText: async (prompt: string, options: any = {}) => {
         if (!this.ai) throw new Error('AI not available');
-        const model = this.ai.getGenerativeModel({ model: 'gemini-1.5-pro' });
+        const model = this.ai.getGenerativeModel({ model: options.model || 'gemini-2.0-flash' });
         const result = await model.generateContent([{ role: 'user', parts: [{ text: prompt }] }]);
         return {
           text: result.response.text(),
@@ -474,7 +474,9 @@ export class OptimizedAIService {
       Extract items and payment amount. Match product names closely.`;
 
       const model = this.ai!.getGenerativeModel({ model: 'gemini-2.0-flash' });
-      const response = await model.generateContent([{ text: prompt + '\n\nReturn JSON with items array (productName, quantity) and payment number.' }]);
+      const response = await model.generateContent([{ 
+        text: prompt + '\n\nReturn JSON with items array (productName, quantity) and payment number.' 
+      }]);
 
       if (!response.text) {
         throw new Error("Voice parsing response was empty.");

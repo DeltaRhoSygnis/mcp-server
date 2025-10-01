@@ -1,0 +1,82 @@
+# Render.com Deployment Configuration - Enhanced for New AI Providers
+# Place this file as render.yaml in your repository root for automatic deployment
+
+services:
+  # MCP Server - Main Application with Enhanced AI Support
+  - type: web
+    name: charnoks-mcp-server
+    env: node
+    plan: standard  # Upgraded for better performance
+    region: oregon
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      # Core Configuration
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3002
+      - key: LOG_LEVEL
+        value: info
+        
+      # Database Configuration (Use external Supabase)
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+        
+      # AI Provider API Keys
+      - key: CEREBRAS_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: MINSTRAL_API_KEY
+        sync: false
+      - key: NVIDIA_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: COHERE_API_KEY
+        sync: false
+        
+      # Vector Database
+      - key: PINECONE_API_KEY
+        sync: false
+        
+      # Security
+      - key: JWT_SECRET
+        generateValue: true
+      - key: MCP_AUTH_TOKEN
+        generateValue: true
+        
+      # Configuration
+      - key: ALLOWED_ORIGINS
+        value: https://your-frontend.vercel.app,https://your-backend.onrender.com
+      - key: RATE_LIMIT_ENABLED
+        value: true
+      - key: CORS_ENABLED
+        value: true
+      - key: MAX_REQUESTS_PER_MINUTE
+        value: 100
+      - key: FILESYSTEM_READONLY
+        value: false
+      - key: MAX_FILE_SIZE
+        value: 50000000
+        
+      # Redis Configuration (external Redis Cloud)
+      - key: REDIS_URL
+        sync: false
+      - key: REDIS_API_KEY
+        sync: false
+        
+    autoDeploy: true
+    disk:
+      name: mcp-disk
+      sizeGB: 10
+      mountPath: /app/data
+    
+# No internal database - using external Supabase
+# No internal Redis - using external Redis Cloud for better performance

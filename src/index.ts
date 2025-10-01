@@ -19,6 +19,7 @@ import {
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { v4 as uuidv4 } from 'uuid';
 import AdvancedGeminiProxy from './advanced-gemini-proxy.js';
+import { enhancedMultiProviderAI } from './enhanced-multi-provider-ai.js';
 import { aiStoreAdvisor } from './services/aiStoreAdvisor';
 import { aiObserver } from './services/aiObserver';
 import { parseStockNote } from './services/geminiService';
@@ -33,6 +34,7 @@ import { mcpStandardTools, mcpStandardSchemas } from './tools/mcp-standard-tools
 import { filesystemMCPTools, filesystemSchemas } from './tools/filesystem-tools';
 import { mcpMemoryTools, memorySchemas } from './tools/memory-tools';
 import { mcpTimeTools, timeSchemas } from './tools/time-tools';
+import { googleDriveMCPTools, googleDriveSchemas } from './tools/google-drive-tools';
 // Import chicken business tools (now fixed)
 import { ChickenBusinessTools } from './tools/chicken-business-tools';
 import { ChatWebSocketService } from './services/chatWebSocketService';
@@ -473,6 +475,7 @@ function authenticateJWT(req: Request, res: Response, next: NextFunction) {
 class ProductionMCPServer {
   private app: express.Application = express();
   private geminiProxy!: AdvancedGeminiProxy;
+  private enhancedAI!: typeof enhancedMultiProviderAI;
   private supabaseClient!: EnhancedSupabaseClient;
   private mcpServer!: Server;
   private tools: Map<string, MCPToolDefinition> = new Map();
@@ -515,6 +518,7 @@ class ProductionMCPServer {
 
   private initializeServices(): void {
     this.geminiProxy = new AdvancedGeminiProxy();
+    this.enhancedAI = enhancedMultiProviderAI; // Initialize enhanced multi-provider AI
     this.supabaseClient = new EnhancedSupabaseClient({
       url: process.env.SUPABASE_URL!,
       serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -1455,6 +1459,18 @@ class ProductionMCPServer {
       }
     });
 
+    // Register Google Drive Tools
+    this.registerGoogleDriveTools();
+
+    // Register Daily Summaries Tools
+    this.registerDailySummariesTools();
+
+    // Register Enhanced Vector Search Tools
+    this.registerEnhancedVectorSearchTools();
+
+    // Register Business Intelligence Tools
+    this.registerBusinessIntelligenceTools();
+
     // Register MCP Standard Protocol Tools
     this.registerMCPStandardTools();
 
@@ -1822,6 +1838,737 @@ class ProductionMCPServer {
     });
   }
 
+  /**
+   * Register Daily Summaries MCP Tools
+   */
+  private registerDailySummariesTools(): void {
+    console.log('📊 Registering Daily Summaries MCP Tools...');
+
+    this.registerTool({
+      name: 'generate_daily_summary',
+      description: 'Generate a comprehensive daily business summary with AI insights and optional archival',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          date: {
+            type: 'string',
+            pattern: '^\\d{4}-\\d{2}-\\d{2}$',
+            description: 'Date in YYYY-MM-DD format'
+          },
+          branchId: {
+            type: 'string',
+            format: 'uuid',
+            description: 'Optional branch ID to filter data'
+          },
+          includeArchival: {
+            type: 'boolean',
+            default: false,
+            description: 'Whether to archive old records during summary generation'
+          },
+          retentionDays: {
+            type: 'number',
+            default: 90,
+            description: 'Number of days to retain detailed records (older records will be archived)'
+          }
+        },
+        required: ['date']
+      },
+      implementation: async (args, context) => {
+        const { dailySummariesService } = await import('./services/dailySummariesService');
+        return await dailySummariesService.generateDailySummary(args);
+      }
+    });
+
+    this.registerTool({
+      name: 'get_summary_history',
+      description: 'Retrieve historical daily summaries with business performance trends',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          branchId: {
+            type: 'string',
+            format: 'uuid',
+            description: 'Optional branch ID to filter summaries'
+          },
+          limit: {
+            type: 'number',
+            default: 30,
+            description: 'Maximum number of summaries to retrieve (default: 30)'
+          }
+        }
+      },
+      implementation: async (args, context) => {
+        const { dailySummariesService } = await import('./services/dailySummariesService');
+        return await dailySummariesService.getSummaryHistory(args.branchId, args.limit);
+      }
+    });
+
+    this.registerTool({
+      name: 'archive_old_records',
+      description: 'Archive old business records to Google Drive and clean up database',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          retentionDays: {
+            type: 'number',
+            default: 90,
+            description: 'Number of days to retain records (older records will be archived)'
+          },
+          branchId: {
+            type: 'string',
+            format: 'uuid',
+            description: 'Optional branch ID to filter archived records'
+          },
+          tables: {
+            type: 'array',
+            items: { type: 'string' },
+            default: ['notes', 'operations', 'expenses'],
+            description: 'Tables to archive'
+          }
+        }
+      },
+      implementation: async (args, context) => {
+        const { dailySummariesService } = await import('./services/dailySummariesService');
+        const today = new Date().toISOString().split('T')[0];
+        return await dailySummariesService.generateDailySummary({
+          date: today,
+          branchId: args.branchId,
+          includeArchival: true,
+          retentionDays: args.retentionDays
+        });
+      }
+    });
+
+    this.registerTool({
+      name: 'schedule_automated_summaries',
+      description: 'Schedule automated daily summary generation with configurable frequency and archival',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          frequency: {
+            type: 'string',
+            enum: ['daily', 'weekly'],
+            default: 'daily',
+            description: 'How often to generate summaries'
+          },
+          time: {
+            type: 'string',
+            pattern: '^([01]?[0-9]|2[0-3]):[0-5][0-9]$',
+            default: '00:00',
+            description: 'Time to run automation (HH:MM format)'
+          },
+          branchId: {
+            type: 'string',
+            format: 'uuid',
+            description: 'Optional branch ID for automated summaries'
+          },
+          includeArchival: {
+            type: 'boolean',
+            default: true,
+            description: 'Whether to include archival in automated runs'
+          },
+          retentionDays: {
+            type: 'number',
+            default: 90,
+            description: 'Days to retain detailed records'
+          }
+        }
+      },
+      implementation: async (args, context) => {
+        const { dailySummariesService } = await import('./services/dailySummariesService');
+        return await dailySummariesService.scheduleAutomatedSummaries(args);
+      }
+    });
+
+    this.registerTool({
+      name: 'get_business_insights',
+      description: 'Get AI-generated business insights and recommendations based on recent performance',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          days: {
+            type: 'number',
+            default: 7,
+            description: 'Number of recent days to analyze'
+          },
+          branchId: {
+            type: 'string',
+            format: 'uuid',
+            description: 'Optional branch ID to filter analysis'
+          },
+          focusArea: {
+            type: 'string',
+            enum: ['sales', 'expenses', 'operations', 'all'],
+            default: 'all',
+            description: 'Specific area to focus insights on'
+          }
+        }
+      },
+      implementation: async (args, context) => {
+        const { dailySummariesService } = await import('./services/dailySummariesService');
+        const summaries = await dailySummariesService.getSummaryHistory(args.branchId, args.days);
+        
+        if (summaries.length === 0) {
+          return { success: false, error: 'No summary data available for analysis' };
+        }
+
+        // Generate insights from summaries
+        const allInsights = summaries.flatMap(s => s.keyInsights);
+        const totalSales = summaries.reduce((sum, s) => sum + s.totalSales, 0);
+        const totalExpenses = summaries.reduce((sum, s) => sum + s.totalExpenses, 0);
+        const totalProfit = summaries.reduce((sum, s) => sum + s.netProfit, 0);
+        const avgDailyProfit = totalProfit / summaries.length;
+
+        return {
+          success: true,
+          insights: {
+            period: `${args.days || 7} days`,
+            branchId: args.branchId || 'all branches',
+            performance: {
+              totalSales,
+              totalExpenses,
+              totalProfit,
+              avgDailyProfit,
+              profitMargin: totalSales > 0 ? ((totalProfit / totalSales) * 100).toFixed(2) + '%' : '0%'
+            },
+            keyInsights: [...new Set(allInsights)].slice(0, 10),
+            recommendations: [
+              avgDailyProfit < 0 ? 'Focus on reducing expenses or increasing sales' : 'Maintain current profitable operations',
+              summaries.length < 7 ? 'Generate more daily summaries for better insights' : 'Good data coverage for analysis'
+            ]
+          }
+        };
+      }
+    });
+
+    console.log('✅ Registered 5 Daily Summaries MCP tools');
+  }
+
+  /**
+   * Register Enhanced Vector Search MCP Tools
+   */
+  private registerEnhancedVectorSearchTools(): void {
+    console.log('🔍 Registering Enhanced Vector Search MCP Tools...');
+
+    this.registerTool({
+      name: 'vector_search_advanced',
+      description: 'Perform advanced vector similarity search across multiple collections with tunable parameters',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Search query text to find semantically similar content'
+          },
+          collections: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Collections to search (notes, memories, operations, expenses)'
+          },
+          similarityThreshold: {
+            type: 'number',
+            minimum: 0,
+            maximum: 1,
+            default: 0.3,
+            description: 'Minimum similarity score (0.0 to 1.0)'
+          },
+          maxResults: {
+            type: 'number',
+            default: 20,
+            description: 'Maximum number of results to return'
+          },
+          branchId: {
+            type: 'string',
+            format: 'uuid',
+            description: 'Optional branch ID filter'
+          },
+          dateRange: {
+            type: 'object',
+            properties: {
+              start: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+              end: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' }
+            },
+            description: 'Optional date range filter'
+          },
+          includeMetadata: {
+            type: 'boolean',
+            default: false,
+            description: 'Include embedding metadata in response'
+          },
+          searchType: {
+            type: 'string',
+            enum: ['semantic', 'hybrid', 'fuzzy'],
+            default: 'semantic',
+            description: 'Type of search to perform'
+          }
+        },
+        required: ['query']
+      },
+      implementation: async (args, context) => {
+        const { enhancedVectorSearchService } = await import('./services/enhancedVectorSearchService');
+        return await enhancedVectorSearchService.vectorSearch(args);
+      }
+    });
+
+    this.registerTool({
+      name: 'cross_collection_similarity',
+      description: 'Find similar items across different collections based on a source item',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sourceId: {
+            type: 'string',
+            format: 'uuid',
+            description: 'ID of the source item to find similarities for'
+          },
+          sourceCollection: {
+            type: 'string',
+            description: 'Collection/table name of the source item'
+          },
+          targetCollections: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Target collections to search for similarities'
+          },
+          similarityThreshold: {
+            type: 'number',
+            minimum: 0,
+            maximum: 1,
+            default: 0.4,
+            description: 'Minimum similarity threshold'
+          },
+          maxResults: {
+            type: 'number',
+            default: 10,
+            description: 'Maximum number of similar items to return'
+          },
+          branchId: {
+            type: 'string',
+            format: 'uuid',
+            description: 'Optional branch ID filter'
+          }
+        },
+        required: ['sourceId', 'sourceCollection']
+      },
+      implementation: async (args, context) => {
+        const { enhancedVectorSearchService } = await import('./services/enhancedVectorSearchService');
+        return await enhancedVectorSearchService.crossCollectionSearch(args);
+      }
+    });
+
+    this.registerTool({
+      name: 'cluster_search_results',
+      description: 'Cluster vector search results into thematic groups for better organization',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Search query to perform and then cluster results'
+          },
+          numClusters: {
+            type: 'number',
+            minimum: 2,
+            maximum: 10,
+            default: 3,
+            description: 'Number of clusters to create'
+          },
+          collections: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Collections to search'
+          },
+          similarityThreshold: {
+            type: 'number',
+            minimum: 0,
+            maximum: 1,
+            default: 0.3,
+            description: 'Minimum similarity threshold'
+          },
+          maxResults: {
+            type: 'number',
+            default: 30,
+            description: 'Maximum results to cluster'
+          },
+          branchId: {
+            type: 'string',
+            format: 'uuid',
+            description: 'Optional branch ID filter'
+          }
+        },
+        required: ['query']
+      },
+      implementation: async (args, context) => {
+        const { enhancedVectorSearchService } = await import('./services/enhancedVectorSearchService');
+        
+        // First perform the search
+        const searchResult = await enhancedVectorSearchService.vectorSearch({
+          query: args.query,
+          collections: args.collections || ['notes', 'memories', 'operations', 'expenses'],
+          similarityThreshold: args.similarityThreshold || 0.3,
+          maxResults: args.maxResults || 30,
+          branchId: args.branchId,
+          includeMetadata: true
+        });
+        
+        if (searchResult.results.length === 0) {
+          return { success: false, error: 'No results found to cluster' };
+        }
+        
+        // Then cluster the results
+        const clusterResult = await enhancedVectorSearchService.clusterResults(
+          searchResult.results,
+          args.numClusters || 3
+        );
+        
+        return {
+          success: true,
+          query: args.query,
+          totalResults: searchResult.results.length,
+          clusters: clusterResult.clusters,
+          searchMetadata: searchResult.searchMetadata
+        };
+      }
+    });
+
+    console.log('✅ Registered 3 Enhanced Vector Search MCP tools');
+  }
+
+  /**
+   * Register Business Intelligence MCP Tools
+   */
+  private registerBusinessIntelligenceTools(): void {
+    console.log('📊 Registering Business Intelligence MCP Tools...');
+
+    this.registerTool({
+      name: 'generate_business_report',
+      description: 'Generate comprehensive business intelligence report with AI insights and recommendations',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          reportType: {
+            type: 'string',
+            enum: ['daily', 'weekly', 'monthly', 'quarterly', 'custom'],
+            description: 'Type of report to generate'
+          },
+          dateRange: {
+            type: 'object',
+            properties: {
+              start: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+              end: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' }
+            },
+            required: ['start', 'end'],
+            description: 'Date range for the report'
+          },
+          branchId: {
+            type: 'string',
+            format: 'uuid',
+            description: 'Optional branch ID to filter data'
+          },
+          templateId: {
+            type: 'string',
+            format: 'uuid',
+            description: 'Optional report template ID'
+          },
+          customSections: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Custom sections to include in the report'
+          },
+          exportToExcel: {
+            type: 'boolean',
+            default: false,
+            description: 'Whether to export report to Excel format'
+          },
+          uploadToDrive: {
+            type: 'boolean',
+            default: false,
+            description: 'Whether to upload the report to Google Drive'
+          }
+        },
+        required: ['reportType', 'dateRange']
+      },
+      implementation: async (args, context) => {
+        const { businessIntelligenceService } = await import('./services/businessIntelligenceService');
+        return await businessIntelligenceService.generateReport(args);
+      }
+    });
+
+    this.registerTool({
+      name: 'get_report_history',
+      description: 'Retrieve historical business intelligence reports',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          branchId: {
+            type: 'string',
+            format: 'uuid',
+            description: 'Optional branch ID to filter reports'
+          },
+          limit: {
+            type: 'number',
+            default: 20,
+            description: 'Maximum number of reports to retrieve'
+          },
+          reportType: {
+            type: 'string',
+            enum: ['daily', 'weekly', 'monthly', 'quarterly', 'custom'],
+            description: 'Filter by report type'
+          }
+        }
+      },
+      implementation: async (args, context) => {
+        const { businessIntelligenceService } = await import('./services/businessIntelligenceService');
+        return await businessIntelligenceService.getReportHistory(args.branchId, args.limit);
+      }
+    });
+
+    this.registerTool({
+      name: 'export_report_to_excel',
+      description: 'Export an existing business intelligence report to Excel format',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          reportId: {
+            type: 'string',
+            format: 'uuid',
+            description: 'ID of the report to export'
+          },
+          uploadToDrive: {
+            type: 'boolean',
+            default: false,
+            description: 'Whether to upload the Excel file to Google Drive'
+          }
+        },
+        required: ['reportId']
+      },
+      implementation: async (args, context) => {
+        const { businessIntelligenceService } = await import('./services/businessIntelligenceService');
+        return await businessIntelligenceService.exportReportToExcel(args.reportId);
+      }
+    });
+
+    this.registerTool({
+      name: 'get_business_kpis',
+      description: 'Get current business key performance indicators and metrics',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          dateRange: {
+            type: 'object',
+            properties: {
+              start: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+              end: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' }
+            },
+            required: ['start', 'end'],
+            description: 'Date range for KPI calculation'
+          },
+          branchId: {
+            type: 'string',
+            format: 'uuid',
+            description: 'Optional branch ID to filter data'
+          },
+          compareWithPrevious: {
+            type: 'boolean',
+            default: false,
+            description: 'Whether to compare with previous period'
+          }
+        },
+        required: ['dateRange']
+      },
+      implementation: async (args, context) => {
+        const { businessIntelligenceService } = await import('./services/businessIntelligenceService');
+        
+        // Generate a temporary report to get KPIs
+        const report = await businessIntelligenceService.generateReport({
+          reportType: 'custom',
+          dateRange: args.dateRange,
+          branchId: args.branchId
+        });
+        
+        return {
+          success: true,
+          kpis: report.kpis,
+          dateRange: args.dateRange,
+          branchId: args.branchId || 'all branches',
+          insights: report.insights.slice(0, 3),
+          recommendations: report.recommendations.slice(0, 3)
+        };
+      }
+    });
+
+    console.log('✅ Registered 4 Business Intelligence MCP tools');
+  }
+
+  /**
+   * Register Google Drive MCP Tools
+   */
+  private registerGoogleDriveTools(): void {
+    console.log('🔧 Registering Google Drive MCP Tools...');
+
+    this.registerTool({
+      name: 'google_drive_export_and_upload',
+      description: 'Export database tables to Excel and upload to Google Drive',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          tables: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Array of table names to export'
+          },
+          format: {
+            type: 'string',
+            enum: ['xlsx', 'csv'],
+            default: 'xlsx',
+            description: 'Export format'
+          },
+          dateRange: {
+            type: 'object',
+            properties: {
+              start: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+              end: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' }
+            },
+            description: 'Optional date range filter'
+          },
+          branchId: {
+            type: 'string',
+            format: 'uuid',
+            description: 'Optional branch ID filter'
+          }
+        },
+        required: ['tables']
+      },
+      implementation: async (args, context) => {
+        return await googleDriveMCPTools.google_drive_export_and_upload(args);
+      }
+    });
+
+    this.registerTool({
+      name: 'google_drive_get_auth_url',
+      description: 'Get Google Drive OAuth 2.0 authorization URL',
+      inputSchema: {
+        type: 'object',
+        properties: {}
+      },
+      implementation: async (args, context) => {
+        return await googleDriveMCPTools.google_drive_get_auth_url(args);
+      }
+    });
+
+    this.registerTool({
+      name: 'google_drive_exchange_code',
+      description: 'Exchange authorization code for Google Drive access tokens',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          code: {
+            type: 'string',
+            description: 'Authorization code from Google OAuth callback'
+          }
+        },
+        required: ['code']
+      },
+      implementation: async (args, context) => {
+        return await googleDriveMCPTools.google_drive_exchange_code(args);
+      }
+    });
+
+    this.registerTool({
+      name: 'google_drive_check_auth',
+      description: 'Check Google Drive authentication status',
+      inputSchema: {
+        type: 'object',
+        properties: {}
+      },
+      implementation: async (args, context) => {
+        return await googleDriveMCPTools.google_drive_check_auth(args);
+      }
+    });
+
+    this.registerTool({
+      name: 'google_drive_get_export_history',
+      description: 'Get history of previous Google Drive exports',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          limit: {
+            type: 'number',
+            minimum: 1,
+            maximum: 100,
+            default: 10,
+            description: 'Number of export records to retrieve'
+          }
+        }
+      },
+      implementation: async (args, context) => {
+        return await googleDriveMCPTools.google_drive_get_export_history(args);
+      }
+    });
+
+    this.registerTool({
+      name: 'google_drive_export_business_backup',
+      description: 'Export comprehensive business backup to Google Drive',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          dateRange: {
+            type: 'object',
+            properties: {
+              start: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+              end: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' }
+            },
+            description: 'Optional date range filter'
+          },
+          branchId: {
+            type: 'string',
+            format: 'uuid',
+            description: 'Optional branch ID filter'
+          },
+          includeEmbeddings: {
+            type: 'boolean',
+            default: false,
+            description: 'Include vector embeddings and memory data'
+          }
+        }
+      },
+      implementation: async (args, context) => {
+        return await googleDriveMCPTools.google_drive_export_business_backup(args);
+      }
+    });
+
+    this.registerTool({
+      name: 'google_drive_schedule_export',
+      description: 'Schedule automated exports to Google Drive',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          frequency: {
+            type: 'string',
+            enum: ['daily', 'weekly', 'monthly'],
+            description: 'Export frequency'
+          },
+          tables: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Tables to include in scheduled export'
+          },
+          time: {
+            type: 'string',
+            pattern: '^\\d{2}:\\d{2}$',
+            description: 'Time to run export (HH:MM format)'
+          }
+        },
+        required: ['frequency', 'tables']
+      },
+      implementation: async (args, context) => {
+        return await googleDriveMCPTools.google_drive_schedule_export(args);
+      }
+    });
+
+    console.log('✅ Google Drive MCP Tools registered successfully');
+  }
+
   private registerTool(tool: MCPToolDefinition): void {
     this.tools.set(tool.name, tool);
 
@@ -1868,10 +2615,10 @@ class ProductionMCPServer {
   }
 
   private setupRoutes(): void {
-    // Health check with comprehensive status
+    // Enhanced Health check with all AI providers status
     this.app.get('/health', async (req, res) => {
       try {
-        const [geminiHealth, supabaseHealth] = await Promise.allSettled([
+        const [geminiHealth, supabaseHealth, enhancedAIHealth] = await Promise.allSettled([
           this.geminiProxy.healthCheck(),
           (async () => {
             try {
@@ -1881,24 +2628,37 @@ class ProductionMCPServer {
             } catch (error: any) {
               return { status: 'unhealthy', error: error.message };
             }
+          })(),
+          (async () => {
+            try {
+              const status = this.enhancedAI.getProviderStatus();
+              return { status: 'healthy', ...status };
+            } catch (error: any) {
+              return { status: 'unhealthy', error: error.message };
+            }
           })()
         ]);
 
         const geminiResult = geminiHealth.status === 'fulfilled' ? geminiHealth.value : { overall: 'unhealthy' };
         const supabaseResult = supabaseHealth.status === 'fulfilled' ? supabaseHealth.value : { status: 'unhealthy' };
+        const enhancedAIResult = enhancedAIHealth.status === 'fulfilled' ? enhancedAIHealth.value : { status: 'unhealthy' };
 
-        const overall = geminiResult.overall === 'healthy' && supabaseResult.status === 'healthy';
+        const overall = geminiResult.overall === 'healthy' && 
+                       supabaseResult.status === 'healthy' && 
+                       enhancedAIResult.status === 'healthy';
 
         res.status(overall ? 200 : 503).json({
           status: overall ? 'healthy' : 'degraded',
           timestamp: new Date().toISOString(),
-          version: '2.0.0',
+          version: '3.0.0', // Updated version for new AI providers
           uptime: process.uptime(),
           services: {
             gemini: geminiResult,
-            supabase: supabaseResult
+            supabase: supabaseResult,
+            enhancedAI: enhancedAIResult
           },
-          models: this.geminiProxy.getModelInfo()
+          models: this.geminiProxy.getModelInfo(),
+          aiProviders: enhancedAIResult.providers || []
         });
       } catch (error) {
         res.status(503).json({

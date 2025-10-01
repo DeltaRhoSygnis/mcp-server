@@ -18,5 +18,19 @@
     "types": ["node"]
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "*.ts", "**/*.example.ts", "MIGRATION-GUIDE-*.ts"]
+  "exclude": [
+    "node_modules", 
+    "dist", 
+    "*.ts",
+    "**/*.example.ts", 
+    "MIGRATION-GUIDE-*.ts",
+    "test-*.ts",
+    "**/*test*.ts",
+    "**/*.spec.ts",
+    "**/*.test.ts",
+    "production-readiness-test.ts",
+    "test-comprehensive-integration.spec.ts",
+    "src/test-suite.ts",
+    "src/test-simple.ts"
+  ]
 }

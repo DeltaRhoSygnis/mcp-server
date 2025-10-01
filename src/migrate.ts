@@ -10,6 +10,8 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 });
 
 const SCHEMA_PATH = path.join(process.cwd(), 'sql', 'enhanced-database-schema.sql');
+const EXPORT_LOGS_SCHEMA_PATH = path.join(process.cwd(), 'sql', 'export_logs_table.sql');
+const DAILY_SUMMARIES_SCHEMA_PATH = path.join(process.cwd(), 'sql', 'daily-summaries-schema.sql');
 
 // Log to ai_audit_logs
 async function logMigration(event: string, success: boolean, details?: string) {
@@ -31,12 +33,34 @@ export async function migrate(): Promise<{ success: boolean; message: string }> 
       return { success: true, message: 'Database already initialized' };
     }
 
-    // Read schema
+    // Read schema files
     const schemaSql = fs.readFileSync(SCHEMA_PATH, 'utf8');
+    const exportLogsSql = fs.readFileSync(EXPORT_LOGS_SCHEMA_PATH, 'utf8');
+    const dailySummariesSql = fs.readFileSync(DAILY_SUMMARIES_SCHEMA_PATH, 'utf8');
 
-    // Run schema (Supabase .sql for DDL)
+    // Run main schema (Supabase .sql for DDL)
     const { error: runError } = await supabase.rpc('execute_sql', { sql: schemaSql }); // Assume RPC or use admin API if needed; fallback .sql()
     if (runError) throw runError;
+
+    // Run export_logs schema
+    const { error: exportLogsError } = await supabase.rpc('execute_sql', { sql: exportLogsSql });
+    if (exportLogsError) throw exportLogsError;
+
+    // Run daily summaries schema
+    const { error: dailySummariesError } = await supabase.rpc('execute_sql', { sql: dailySummariesSql });
+    if (dailySummariesError) throw dailySummariesError;
+
+    // Run enhanced vector search functions
+    const vectorSearchFunctionsPath = path.join(process.cwd(), 'sql', 'enhanced-vector-search-functions.sql');
+    const vectorSearchFunctionsSql = fs.readFileSync(vectorSearchFunctionsPath, 'utf8');
+    const { error: vectorSearchError } = await supabase.rpc('execute_sql', { sql: vectorSearchFunctionsSql });
+    if (vectorSearchError) throw vectorSearchError;
+
+    // Run business intelligence schema
+    const businessIntelligenceSchemaPath = path.join(process.cwd(), 'sql', 'business-intelligence-schema.sql');
+    const businessIntelligenceSql = fs.readFileSync(businessIntelligenceSchemaPath, 'utf8');
+    const { error: businessIntelligenceError } = await supabase.rpc('execute_sql', { sql: businessIntelligenceSql });
+    if (businessIntelligenceError) throw businessIntelligenceError;
 
     // Verify (re-check notes)
     const { error: verifyError } = await supabase.from('notes').select('id').limit(1).maybeSingle();

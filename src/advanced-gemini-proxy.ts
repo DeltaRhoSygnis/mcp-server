@@ -12,12 +12,14 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 export interface GeminiConfig {
+  model?: string;
   temperature?: number;
   topP?: number;
   topK?: number;
   maxOutputTokens?: number;
   streaming?: boolean;
   safetyThreshold?: 'low' | 'medium' | 'high';
+  useLoadBalancer?: boolean;
 }
 
 export interface GeminiResponse {
@@ -95,6 +97,27 @@ export class AdvancedGeminiProxy {
         features: ['fast-response', 'structured-output', 'json-mode'],
         bestFor: ['structured-parsing', 'note-analysis', 'pattern-recognition', 'chicken-business-ops']
       }],
+      ['gemini-2.5-flash-preview', {
+        maxTokens: 8192,
+        rateLimit: { rpm: 10, tpm: 250000 },
+        costTier: 'medium',
+        features: ['preview-features', 'structured-output', 'experimental'],
+        bestFor: ['advanced-parsing', 'preview-features', 'cutting-edge-analysis']
+      }],
+      ['gemini-2.5-flash-lite', {
+        maxTokens: 4096,
+        rateLimit: { rpm: 15, tpm: 250000 },
+        costTier: 'low',
+        features: ['lightweight', 'fast', 'efficient'],
+        bestFor: ['quick-classification', 'simple-parsing', 'real-time-responses']
+      }],
+      ['gemini-2.5-flash-lite-preview', {
+        maxTokens: 4096,
+        rateLimit: { rpm: 15, tpm: 250000 },
+        costTier: 'low',
+        features: ['lightweight', 'preview', 'experimental'],
+        bestFor: ['experimental-features', 'beta-testing', 'preview-capabilities']
+      }],
       ['gemini-2.0-flash-exp', {
         maxTokens: 8192,
         rateLimit: { rpm: 30, tpm: 1000000 },
@@ -123,19 +146,19 @@ export class AdvancedGeminiProxy {
         features: ['fast', 'lightweight'],
         bestFor: ['simple-parsing', 'quick-classification', 'lightweight-tasks']
       }],
-      ['gemini-1.5-pro', {
+      ['gemini-2.5-pro', {
         maxTokens: 8192,
-        rateLimit: { rpm: 5, tpm: 300000 },
+        rateLimit: { rpm: 5, tpm: 250000 },
         costTier: 'high',
-        features: ['text', 'code', 'long-context', 'multimodal'],
-        bestFor: ['complex-tasks', 'long-documents', 'detailed-analysis']
+        features: ['advanced-reasoning', 'long-context', 'structured-output'],
+        bestFor: ['complex-business-analysis', 'strategic-insights', 'detailed-reports']
       }],
-      ['gemini-1.5-flash', {
+      ['gemini-2.0-flash', {
         maxTokens: 8192,
         rateLimit: { rpm: 15, tpm: 1000000 },
-        costTier: 'low',
-        features: ['text', 'code', 'fast', 'efficient'],
-        bestFor: ['quick-tasks', 'parsing', 'basic-analysis']
+        costTier: 'medium',
+        features: ['general-parsing', 'conversation', 'moderate-complexity'],
+        bestFor: ['voice-parsing', 'business-conversations', 'note-analysis']
       }],
       ['text-embedding-004', {
         maxTokens: 2048,
@@ -170,16 +193,16 @@ export class AdvancedGeminiProxy {
 
     // Handle long context requirements
     if (contextLength === 'long' || complexity === 'complex') {
-      return priority === 'high' ? 'gemini-1.5-pro' : 'gemini-2.0-flash-exp';
+      return priority === 'high' ? 'gemini-2.5-pro' : 'gemini-2.0-flash-thinking-exp';
     }
 
     // Handle simple/fast tasks
     if (complexity === 'simple' || priority === 'low') {
-      return 'gemini-1.5-flash';
+      return 'gemini-2.0-flash-lite';
     }
 
     // Default for medium complexity
-    return 'gemini-2.0-flash-exp';
+    return 'gemini-2.0-flash';
   }
 
   /**
@@ -260,6 +283,7 @@ export class AdvancedGeminiProxy {
 
   /**
    * Smart model selection based on task requirements (enhanced version)
+   * Implements multi-tier fallback: Gemini 2.5 → Gemini 2.0 → External APIs
    */
   selectOptimalModel(task: TaskRequest): string {
     const { type, complexity, priority, estimatedTokens } = task;
@@ -269,32 +293,131 @@ export class AdvancedGeminiProxy {
       return 'text-embedding-004';
     }
 
-    // Handle complex reasoning tasks
+    // Handle complex reasoning tasks (First layer: 2.5 series)
     if (complexity === 'complex' && type === 'text') {
-      return priority === 'high' ? 'gemini-2.5-pro' : 'gemini-2.0-flash-thinking-exp';
+      return priority === 'high' ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
     }
 
-    // Handle structured output requirements
+    // Handle structured output requirements (First layer: 2.5 series)
     if (task.requiresStructuredOutput) {
       return complexity === 'complex' ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
     }
 
-    // Handle simple tasks efficiently
+    // Handle simple tasks efficiently (First layer: 2.5 lite)
     if (complexity === 'simple') {
-      return 'gemini-2.0-flash-lite';
+      return 'gemini-2.5-flash-lite';
     }
 
-    // Handle medium complexity with cost considerations
+    // Handle medium complexity with cost considerations (First layer: 2.5 series)
     if (complexity === 'medium') {
-      return priority === 'high' ? 'gemini-2.5-flash' : 'gemini-2.0-flash';
+      return priority === 'high' ? 'gemini-2.5-flash' : 'gemini-2.5-flash-lite';
     }
 
-    // Default fallback
-    return 'gemini-2.0-flash-exp';
+    // Default fallback (First layer)
+    return 'gemini-2.5-flash';
   }
 
   /**
-   * Enhanced request method with automatic model selection and rate limiting
+   * Multi-tier fallback model selection
+   * Tier 1: Gemini 2.5 series (primary)
+   * Tier 2: Gemini 2.0 series (secondary)
+   * Tier 3: External APIs (OpenRouter, HuggingFace, Cohere)
+   */
+  getModelFallbackChain(task: TaskRequest): string[] {
+    const { complexity, type, priority } = task;
+    
+    // First layer: Gemini 2.5 variants
+    const tier1Models = {
+      'complex': ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-preview'],
+      'medium': ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-flash-preview'],
+      'simple': ['gemini-2.5-flash-lite', 'gemini-2.5-flash-lite-preview', 'gemini-2.5-flash']
+    };
+    
+    // Second layer: Gemini 2.0 fallbacks
+    const tier2Models = {
+      'complex': ['gemini-2.0-flash-thinking-exp', 'gemini-2.0-flash-exp'],
+      'medium': ['gemini-2.0-flash', 'gemini-2.0-flash-exp'],
+      'simple': ['gemini-2.0-flash-lite', 'gemini-2.0-flash']
+    };
+    
+    const firstLayer = tier1Models[complexity] || tier1Models['medium'];
+    const secondLayer = tier2Models[complexity] || tier2Models['medium'];
+    
+    return [...firstLayer, ...secondLayer];
+  }
+
+  /**
+   * Execute request with multi-tier fallback system
+   */
+  async executeWithFallback(
+    task: TaskRequest,
+    prompt: string,
+    config: GeminiConfig = {}
+  ): Promise<GeminiResponse> {
+    const fallbackChain = this.getModelFallbackChain(task);
+    let lastError: Error | null = null;
+    
+    // Tier 1: Try Gemini 2.5 models
+    for (const model of fallbackChain.slice(0, 3)) {
+      try {
+        const rateLimitCheck = this.canMakeRequest(model);
+        if (rateLimitCheck.allowed) {
+          return await this.generateText(prompt, { ...config, model });
+        }
+      } catch (error) {
+        console.warn(`Tier 1 model ${model} failed:`, error);
+        lastError = error as Error;
+        continue;
+      }
+    }
+    
+    // Tier 2: Try Gemini 2.0 models
+    for (const model of fallbackChain.slice(3)) {
+      try {
+        const rateLimitCheck = this.canMakeRequest(model);
+        if (rateLimitCheck.allowed) {
+          return await this.generateText(prompt, { ...config, model });
+        }
+      } catch (error) {
+        console.warn(`Tier 2 model ${model} failed:`, error);
+        lastError = error as Error;
+        continue;
+      }
+    }
+    
+    // Tier 3: External APIs fallback (placeholder for future implementation)
+    try {
+      return await this.executeExternalFallback(task, prompt, config);
+    } catch (error) {
+      console.error('All fallback tiers failed:', error);
+      throw lastError || new Error('All AI models unavailable');
+    }
+  }
+
+  /**
+   * External API fallback using Dynamic Load Balancer
+   * Routes to OpenRouter, HuggingFace, Cohere based on optimal strategy
+   */
+  private async executeExternalFallback(
+    task: TaskRequest,
+    prompt: string,
+    config: GeminiConfig
+  ): Promise<GeminiResponse> {
+    try {
+      // Import dynamically to avoid circular dependencies
+      const { dynamicLoadBalancer } = await import('./services/dynamicLoadBalancer');
+      
+      // Use load balancer for external API routing
+      // Remove preferredTier as it's not part of GeminiConfig
+      return await dynamicLoadBalancer.routeRequest(task, prompt, config);
+    } catch (error) {
+      console.error('External API fallback failed:', error);
+      throw new Error(`All external APIs unavailable: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Enhanced request method with automatic model selection and load balancing
    */
   async makeIntelligentRequest(
     task: TaskRequest,
@@ -305,6 +428,12 @@ export class AdvancedGeminiProxy {
     const requestId = uuidv4();
 
     try {
+      // Use load balancer if enabled
+      if (config.useLoadBalancer) {
+        const { dynamicLoadBalancer } = await import('./services/dynamicLoadBalancer');
+        return await dynamicLoadBalancer.routeRequest(task, prompt, config);
+      }
+
       // Select optimal model
       const modelId = this.selectOptimalModel(task);
       console.log(`🧠 Selected ${modelId} for ${task.type} task (${task.complexity} complexity)`);
@@ -745,6 +874,17 @@ export class AdvancedGeminiProxy {
     }
 
     return info;
+  }
+
+  /**
+   * Execute request method for load balancer compatibility
+   */
+  async executeRequest(
+    task: TaskRequest,
+    prompt: string,
+    config: GeminiConfig = {}
+  ): Promise<GeminiResponse> {
+    return this.makeIntelligentRequest(task, prompt, config);
   }
 
   /**

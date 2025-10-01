@@ -1,117 +1,271 @@
-# mcp-server
+# 🚀 **DEPLOYMENT CONFIGURATIONS**
+## Ready-to-use deployment configurations and scripts
 
-Add to .env:
-JWT_SECRET=your_jwt_secret_here (generate a strong one, e.g., via openssl rand -hex 32)
+This folder contains deployment configurations, scripts, and Docker files for various platforms and environments.
 
-## Real-Time WebSockets
+---
 
-For live voice parsing (e.g., orders with inaccuracies), use WebSockets on port 3002.
+## 📁 **File Structure**
 
-### Client Example (Browser with Web Speech API)
-```javascript
-const ws = new WebSocket('ws://localhost:3002'); // Add ?token=your-jwt for auth
-ws.onopen = () => console.log('Connected');
-const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-recognition.continuous = true;
-recognition.interimResults = true;
-recognition.onresult = (event) => {
-  for (let i = event.resultIndex; i < event.results.length; i++) {
-    const chunk = event.results[i][0].transcript;
-    ws.send(JSON.stringify({
-      toolName: 'live_voice_stream',
-      params: { streamId: 'session1', transcriptChunk: chunk, products: [{id: 'whole', name: 'Whole Chicken'}] }
-    }));
-  }
-};
-ws.onmessage = (event) => {
-  const data = JSON.parse(event.data);
-  if (data.partialParse) console.log('Partial:', data.partialParse); // e.g., {items: [{productId: 'whole', qty: 2}], confidence: 0.8}
-  if (data.final) console.log('Final sales:', data.final); // Structured {items, payment}
-  if (data.streamChunk) console.log('Gemini correction:', data.streamChunk);
-};
-recognition.start();
+```
+DEPLOYMENT_CONFIGS/
+├── README.md                    # This file
+├── docker/
+│   ├── Dockerfile              # Multi-stage Docker build
+│   ├── docker-compose.yml      # Complete stack composition
+│   ├── .dockerignore           # Docker ignore rules
+│   └── docker-entrypoint.sh    # Container startup script
+├── scripts/
+│   ├── deploy-production.sh    # Production deployment script
+│   ├── deploy-production.bat   # Windows deployment script
+│   ├── cleanup-workspace.sh    # Workspace cleanup
+│   └── setup-environment.sh    # Environment setup
+├── configs/
+│   ├── Procfile                # Heroku process file
+│   ├── vercel.json             # Vercel configuration
+│   ├── netlify.toml            # Netlify configuration
+│   ├── render.yaml             # Render service config
+│   └── railway.json            # Railway configuration
+├── environments/
+│   ├── .env.example            # Environment template
+│   ├── .env.production         # Production environment
+│   ├── .env.development        # Development environment
+│   └── .env.test               # Test environment
+└── ci-cd/
+    ├── github-actions.yml      # GitHub Actions workflow
+    ├── gitlab-ci.yml           # GitLab CI configuration
+    └── jenkins.groovy          # Jenkins pipeline
 ```
 
-### Server Protocol
-- Connect: ws://localhost:3002 (upgrade with Authorization: Bearer <jwt>)
-- Send: JSON {toolName: 'live_voice_stream', params: {streamId, transcriptChunk, products?}}
-- Receive: Streamed {partialParse: {...}, confidence: number} or {final: {structuredSales: {...}}, streamId}
-- Timeout: 5s for final parse; fuzzy + Gemini streaming handles "chikin" → "Whole Chicken".
+---
 
-Integrate with Todo 1 auth for secure streams.
+## 🎯 **Quick Deployment**
 
-## Database Migrations
+### **Docker Deployment**
+```bash
+# Build and run with Docker Compose
+docker-compose up -d
 
-The server auto-migrates the DB on startup using service role (runs sql/enhanced-database-schema.sql if tables missing, idempotent check via notes table).
+# Or build manually
+docker build -t charnoks-mcp .
+docker run -p 3002:3002 charnoks-mcp
+```
 
-- **Auto**: On npm run dev/start, migrate() called in constructor—logs to ai_audit_logs.
-- **Manual**: Build (npm run build), then node dist/migrate.js (standalone run, logs errors).
-- **Schema**: Edit sql/enhanced-database-schema.sql for changes (tables: notes, entities, relations, observations, ai_audit_logs, products, sales; pgvector indexes).
-- **Fallback**: If fails, manual Supabase SQL editor run schema.sql (service role bypasses RLS).
+### **Platform-Specific Deployment**
 
-## Scalability
+#### **Vercel (Frontend)**
+```bash
+# Copy vercel.json to your frontend root
+cp configs/vercel.json /path/to/your/frontend/
+vercel --prod
+```
 
-For production scale, use cluster mode:
-- Run: npm run start:cluster (env WORKERS=4 for multi-core).
-- Guide: See [MD files/scalability.md](MD files/scalability.md) for multi-instance, concurrency opts (batch=5), load balancing (WS sticky).
+#### **Render (Backend)**
+```bash
+# Copy render.yaml to your backend root
+cp configs/render.yaml /path/to/your/backend/
+# Connect GitHub repo to Render
+```
 
-## API Integration Examples
+#### **Heroku**
+```bash
+# Copy Procfile to your root
+cp configs/Procfile /path/to/your/app/
+heroku create your-app-name
+git push heroku main
+```
 
-### Note Workflow (curl with JWT)
-1. Auth: curl -X POST http://localhost:3002/auth -H "Content-Type: application/json" -d '{"token":"your_mcp_auth_token"}' → {"token": "jwt_here"}
+---
 
-2. Collect note: curl -X POST http://localhost:3002/api/tools/call -H "Authorization: Bearer jwt_here" -H "Content-Type: application/json" -d '{"name":"note_collection","arguments":{"content":"Bought 20 bags whole chicken for 10000 pesos","userRole":"owner"}}' → {"success":true,"result":{"note_id":"uuid","message":"Note collected"}}
+## 🐳 **Docker Configuration**
 
-3. Parse: curl -X POST ... -d '{"name":"parse_chicken_note","arguments":{"note_id":"uuid"}}' → {"success":true,"result":{"parsed_data":{"purchases":[{"productId":"whole","qty":20,"cost":10000}],"status":"parsed"}}}
+### **Features**
+- ✅ **Multi-stage build** for optimal image size
+- ✅ **Node.js 18** Alpine base image
+- ✅ **Non-root user** for security
+- ✅ **Health checks** built-in
+- ✅ **Environment variables** support
+- ✅ **Production optimizations**
 
-4. Apply: curl -X POST ... -d '{"name":"apply_to_stock","arguments":{"note_id":"uuid"}}' → {"success":true,"message":"Stock updated"}
+### **Usage**
+```bash
+# Development
+docker-compose -f docker-compose.dev.yml up
 
-### Deployment (Heroku/Codespace)
-- Heroku: heroku create, git push heroku main, heroku config:set GEMINI_API_KEY=... SUPABASE_URL=... JWT_SECRET=... WORKERS=4
-- Procfile: web: npm run start:cluster
-- Codespace: npm run dev:cluster (env WORKERS=2)
-- Scale: heroku ps:scale web=2 (multi-dyno load balance)
+# Production
+docker-compose -f docker-compose.prod.yml up -d
 
-### Troubleshooting
-- Proxy retries: AdvancedGeminiProxy backoff 3x on 429/5xx (check logs).
-- Rate limits: 10/min/user (Todo 1, 429 error); increase env MAX_REQUESTS_PER_MINUTE.
-- DB issues: Auto-migrate on start; manual node dist/migrate.js if fail (check ai_audit_logs).
-- WS auth: ws://localhost:3002?token=jwt_here for live_voice_stream.
+# With custom environment
+docker-compose --env-file .env.production up
+```
 
-## Integration Examples
+---
 
-### Note Workflow (curl with JWT)
-1. Auth: curl -X POST http://localhost:3002/auth -H "Content-Type: application/json" -d '{"token":"your_mcp_auth_token"}' (get JWT).
+## 📜 **Deployment Scripts**
 
-2. Collect Note: curl -X POST http://localhost:3002/api/tools/call -H "Authorization: Bearer <jwt>" -H "Content-Type: application/json" -d '{"name":"note_collection","arguments":{"content":"Bought 20 bags whole chicken for ₱10k","userRole":"owner"}}' (response {note_id, success}).
+### **deploy-production.sh**
+Complete production deployment script with:
+- Environment validation
+- Dependency installation
+- Build process
+- Health checks
+- Rollback capability
 
-3. Parse: curl -X POST ... -d '{"name":"parse_chicken_note","arguments":{"note_id":"<id>"}}' (response {parsed: {purchases: [{productId:"whole", qty:20, cost:10000}]}}).
+### **cleanup-workspace.sh**
+Workspace cleanup script that:
+- Removes test files
+- Cleans build artifacts
+- Optimizes for production
+- Creates deployment package
 
-4. Apply: curl -X POST ... -d '{"name":"apply_to_stock","arguments":{"note_id":"<id>","dry_run":false}}' (response {success, stockUpdated}).
+### **setup-environment.sh**
+Environment setup script for:
+- Node.js installation
+- Dependency management
+- Environment configuration
+- Database setup
 
-### Voice Stream (WS)
-See Real-Time WebSockets section.
+---
 
-### Forecast: curl -X POST ... -d '{"name":"forecast_stock","arguments":{"salesHistory":[{"date":"2025-09-22","amount":5000}]}}' (response {predictedSales: [{day:"1", amount:5500, confidence:0.8}], summary}).
+## ⚡ **Platform Configurations**
 
-## Deployment
+### **Vercel (vercel.json)**
+```json
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "package.json",
+      "use": "@vercel/static-build"
+    }
+  ],
+  "routes": [
+    { "src": "/(.*)", "dest": "/index.html" }
+  ]
+}
+```
 
-### Heroku
-1. Procfile: web: npm start:cluster
-2. Env: GEMINI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, MCP_AUTH_TOKEN, JWT_SECRET, PORT=3002, WORKERS=2
-3. Deploy: git push heroku main; heroku scale web=2 (multi-dyno for scale).
+### **Render (render.yaml)**
+```yaml
+services:
+  - type: web
+    name: charnoks-mcp
+    env: node
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+```
 
-### Codespace
-1. .devcontainer/devcontainer.json: postCreateCommand "npm i && npm run build"
-2. Run: npm run dev:cluster (env WORKERS=4)
+### **Netlify (netlify.toml)**
+```toml
+[build]
+  command = "npm run build"
+  publish = "dist"
 
-See scalability.md for multi-instance.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+```
 
-## Troubleshooting
+---
 
-- **Proxy Retries**: advanced-gemini-proxy.ts backoff on 429/5xx (env GEMINI_RETRY_MAX=3).
-- **Rate Limits**: 10/min/user (per Todo 1); 429 response—wait 60s.
-- **DB Issues**: Auto-migrate on start; manual node dist/migrate.js if fail (check Supabase logs).
-- **Auth Errors**: 401/403—verify JWT expiry (1h, refresh via /auth); MCP_AUTH_TOKEN in .env.
-- **Tool Errors**: 422 validation (check schemas in openapi.yaml); log ai_audit_logs for details.
-- **WS Disconnect**: Reconnect on close, pass token in query ?token=<jwt>.
+## 🔄 **CI/CD Pipelines**
+
+### **GitHub Actions**
+- ✅ **Automated testing** on PR
+- ✅ **Multi-environment deployment**
+- ✅ **Security scanning**
+- ✅ **Performance monitoring**
+
+### **Features**
+- Build and test on multiple Node.js versions
+- Deploy to staging and production
+- Automated dependency updates
+- Security vulnerability scanning
+
+---
+
+## 🌍 **Environment Management**
+
+### **Environment Files**
+- `.env.example` - Template with all variables
+- `.env.development` - Development configuration
+- `.env.production` - Production configuration  
+- `.env.test` - Testing configuration
+
+### **Variables Structure**
+```bash
+# Server Configuration
+NODE_ENV=production
+PORT=3002
+
+# MCP Server
+MCP_AUTH_TOKEN=your_token_here
+JWT_SECRET=your_jwt_secret
+
+# Database
+DATABASE_URL=postgresql://...
+SUPABASE_URL=https://...
+
+# AI Services
+OPENAI_API_KEY=sk-...
+GOOGLE_AI_API_KEY=...
+
+# Features
+ENABLE_VOICE_STREAMING=true
+ENABLE_REAL_TIME_CHAT=true
+```
+
+---
+
+## 🔧 **Customization Guide**
+
+### **Modify Docker Configuration**
+1. Update `Dockerfile` for custom base image
+2. Modify `docker-compose.yml` for additional services  
+3. Update environment variables in compose files
+
+### **Adapt Deployment Scripts**
+1. Modify platform-specific settings
+2. Add custom build steps
+3. Include additional health checks
+4. Configure monitoring and logging
+
+### **Configure CI/CD**
+1. Update GitHub Actions for your workflow
+2. Modify deployment triggers
+3. Add custom testing steps
+4. Configure notifications
+
+---
+
+## 📊 **Deployment Matrix**
+
+| Platform | Frontend | Backend | Database | Cost |
+|----------|----------|---------|----------|------|
+| Vercel + Render | ✅ | ✅ | Supabase | Free Tier |
+| Netlify + Railway | ✅ | ✅ | PostgreSQL | Free Tier |
+| Docker + VPS | ✅ | ✅ | Self-hosted | ~$5/month |
+| Heroku Full Stack | ✅ | ✅ | Heroku Postgres | ~$7/month |
+
+---
+
+## 🚀 **Quick Start Commands**
+
+```bash
+# Copy all configs to your project
+cp -r DEPLOYMENT_CONFIGS/* /path/to/your/project/
+
+# Make scripts executable
+chmod +x scripts/*.sh
+
+# Run production deployment
+./scripts/deploy-production.sh
+
+# Or use Docker
+docker-compose up -d
+```
+
+---
+
+**Everything you need to deploy! 🚀✨**

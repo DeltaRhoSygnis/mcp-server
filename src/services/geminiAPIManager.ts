@@ -13,11 +13,11 @@ export class GeminiAPIManager {
   }
 
   async generateText(prompt: string, options: any = {}) {
-    const model = this.genAI.getGenerativeModel({ model: options.model || 'gemini-1.5-pro' });
+    const model = this.genAI.getGenerativeModel({ model: options.model || 'gemini-2.0-flash' });
     const result = await model.generateContent(prompt);
     return {
       text: result.response.text(),
-      model: options.model || 'gemini-1.5-pro',
+      model: options.model || 'gemini-2.0-flash',
       success: true
     };
   }
